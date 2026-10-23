@@ -92,7 +92,7 @@ button.link{border:0;background:none;padding:0;color:var(--accent);font-size:14p
 .state .dir{font-weight:600}
 .state .dir.chg{color:var(--good)} .state .dir.dsg{color:var(--accent)}
 .sub{color:var(--muted);font-size:14.5px;font-variant-numeric:tabular-nums}
-.figs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0}
+.figs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0}
 @media (max-width:420px){.figs{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .figs>div{background:var(--surface);padding:10px 12px;min-width:0}
 .figs dt{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:500}
@@ -217,9 +217,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
           <div><dt>Voltage</dt><dd id="fV">--</dd></div>
           <div><dt>Current</dt><dd id="fA">--</dd></div>
           <div><dt>Power</dt><dd id="fW">--</dd></div>
-          <div><dt>Cell spread</dt><dd id="fSpread">--</dd></div>
           <div><dt>Battery temp</dt><dd id="fTemp">--</dd></div>
-          <div><dt>MOSFET temp</dt><dd id="fMos">--</dd></div>
         </dl>
       </div>
       <div class="chips" id="chips"></div>
@@ -870,12 +868,10 @@ function render() {
   $('#fW').classList.toggle('pos', d.w > 1);
   const maxT = d.temps.length ? Math.max(...d.temps) : null;
   $('#fTemp').innerHTML = maxT === null ? '--' : `${degF(maxT)}<small>°F</small>`;
-  $('#fMos').innerHTML = d.mos === null ? '--' : `${degF(d.mos)}<small>°F</small>`;
 
   const cells = d.cells, box = $('#cells');
   if (cells.length) {
     const mn = Math.min(...cells), mx = Math.max(...cells), spread = Math.round((mx - mn) * 1000), avg = cells.reduce((a, b) => a + b, 0) / cells.length;
-    $('#fSpread').innerHTML = `${spread}<small>mV</small>`;
     const sc = $('#spreadChip'); sc.textContent = spread + ' mV spread'; sc.className = 'chip ' + (spread < 20 ? 'good' : spread < 50 ? 'warn' : 'bad');
     box.textContent = '';
     const iMin = cells.indexOf(mn), iMax = cells.indexOf(mx);
@@ -958,7 +954,7 @@ function renderSettings() {
 }
 function renderInfo() {
   const i = S.info, rows = [['Battery', S.demo ? 'Demo battery' : S.devName || '--'], ['BMS type', S.demo ? 'Shanmu / Mottcell (demo)' : S.proto ? S.proto.label : '--'],
-    ['Cycles', S.live ? String(S.live.cycles) : ''], ['Health', S.live && S.live.soh ? S.live.soh + '%' : ''],
+    ['Cycles', S.live ? String(S.live.cycles) : ''], ['Heater', S.live ? (S.live.heat ? 'On' : 'Off') : ''], ['Health', S.live && S.live.soh ? S.live.soh + '%' : ''],
     ['Design capacity', S.live && S.live.designAh ? S.live.designAh.toFixed(0) + ' Ah' : ''], ['Full capacity', S.live && S.live.fullAh ? S.live.fullAh.toFixed(1) + ' Ah' : ''],
     ['Firmware', i.firmware], ['Model SN', i.model], ['Pack SN', i.packSn], ['Protocol version', i.protocol]];
   $('#info').innerHTML = rows.filter(r => r[1]).map(([k, v]) => `<dt>${k}</dt><dd></dd>`).join('');
@@ -1011,7 +1007,7 @@ function stopDemo() {
   if (!S.demo) return;
   S.demo = false; clearInterval(demoTimer); S.live = null; S.settings = null; S.info = {};
   $('#thresholds').innerHTML = '<p class="empty">Reading from the battery…</p>'; renderInfo();
-  ['#soc', '#fV', '#fA', '#fW', '#fSpread', '#fTemp', '#fMos'].forEach(s => $(s).textContent = '--');
+  ['#soc', '#fV', '#fA', '#fW', '#fTemp'].forEach(s => $(s).textContent = '--');
   $('#stateLine').textContent = 'Waiting for the first reading…'; $('#capLine').textContent = '';
   $('#cells').textContent = ''; $('#temps').textContent = ''; $('#chips').textContent = ''; $('#socFill').style.width = '0';
   $('#histNote').textContent = 'History keeps the last 24 hours on this device while the page is open and connected.';
