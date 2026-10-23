@@ -260,7 +260,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
             <label class="check"><input type="checkbox" id="flipSign"> Current sign is reversed</label>
           </div>
         </div>
-        <p class="note">Rated capacity is used for time remaining. This BMS reports state of charge but no amp-hours that SMB Link reads.</p>
+        <p class="note">Only needed if your battery doesn't report its own amp-hours. Cellwatch then uses this with the state of charge to estimate time remaining.</p>
       </section>
     </div>
   </div>
@@ -402,7 +402,7 @@ function decodePace(r) {
     temps: take(r, 47, 10, r[46], x => x !== 0xffff).filter(x => x !== 0xffff).map(x => i16(x) / 10),
     mos: r[57] !== 0xffff ? i16(r[57]) / 10 : null,
     chg: bit(status, 10), dsg: bit(status, 11), heat: bit(status, 15),
-    unmapped: [3, 4, 5, 6, 8, 12, 13, 14].map(i => [i, r[i]]),
+    unmapped: [8, 12, 13, 14, 58].map(i => [i, r[i]]),
   };
   // Pace's published map puts SOH and capacities (10 mAh units) in 3–6. SMB Link never shows them, so accept only sane values.
   const rem = r[4] / 100, full = r[5] / 100;
@@ -436,6 +436,28 @@ const SETTINGS = [
     ['Balancing starts at', 0x6f, 'u16', 0.001, 'V'], ['Balancing difference', 0x70, 'u16', 0.001, 'V'],
     ['Charge cut-off voltage', 0x71, 'u32', 0.001, 'V'], ['Charge cut-off current', 0x73, 'u16', 0.001, 'A'],
     ['Sleep voltage', 0x74, 'u16', 0.001, 'V'], ['Sleep delay', 0x75, 'u16', 1, 'min'], ['Low SOC alarm', 0x77, 'u16', 1, '%']]],
+];
+
+
+// Pace settings block starts at register 0x53. Pack voltages use 10 mV unless flag bits in live register 8 say mV.
+const PACE_SETTINGS = [
+  ['Voltage', [
+    ['Pack over-voltage alarm', 0, 'pv', 0], ['Pack over-voltage protection', 1, 'pv', 0], ['Pack over-voltage release', 2, 'pv', 0], ['Pack over-voltage delay', 3, 'x', 0.1, 's'],
+    ['Cell over-voltage alarm', 4, 'x', 0.001, 'V'], ['Cell over-voltage protection', 5, 'x', 0.001, 'V'], ['Cell over-voltage release', 6, 'x', 0.001, 'V'], ['Cell over-voltage delay', 7, 'x', 0.1, 's'],
+    ['Pack under-voltage alarm', 8, 'pv', 1], ['Pack under-voltage protection', 9, 'pv', 1], ['Pack under-voltage release', 10, 'pv', 1], ['Pack under-voltage delay', 11, 'x', 0.1, 's'],
+    ['Cell under-voltage alarm', 12, 'x', 0.001, 'V'], ['Cell under-voltage protection', 13, 'x', 0.001, 'V'], ['Cell under-voltage release', 14, 'x', 0.001, 'V'], ['Cell under-voltage delay', 15, 'x', 0.1, 's']]],
+  ['Current', [
+    ['Charge over-current alarm', 16, 'x', 1, 'A'], ['Charge over-current protection', 17, 'x', 1, 'A'], ['Charge over-current delay', 18, 'x', 0.1, 's'],
+    ['Discharge over-current alarm', 19, 's', 1, 'A'], ['Discharge over-current protection', 20, 's', 1, 'A'], ['Discharge over-current delay', 21, 'x', 0.1, 's'],
+    ['Discharge over-current 2 protection', 22, 'x', 1, 'A'], ['Discharge over-current 2 delay', 23, 'x', 0.025, 's'],
+    ['Charge over-current 2 protection', 53, 'x', 1, 'A'], ['Charge over-current 2 delay', 54, 'x', 0.025, 's'], ['Short-circuit delay', 51, 'x', 25, 'µs']]],
+  ['Temperature', ['Charge high temp alarm', 'Charge high temp protection', 'Charge high temp release', 'Discharge high temp alarm', 'Discharge high temp protection', 'Discharge high temp release',
+    'Charge low temp alarm', 'Charge low temp protection', 'Charge low temp release', 'Discharge low temp alarm', 'Discharge low temp protection', 'Discharge low temp release',
+    'MOSFET high temp alarm', 'MOSFET high temp protection', 'MOSFET high temp release', 'Ambient high temp alarm', 'Ambient high temp protection', 'Ambient high temp release',
+    'Ambient low temp alarm', 'Ambient low temp protection', 'Ambient low temp release'].map((l, i) => [l, 24 + i, 'c'])],
+  ['Balancing & other', [
+    ['Balancing starts at', 45, 'x', 0.001, 'V'], ['Balancing difference', 46, 'x', 0.001, 'V'], ['Charge cut-off voltage', 47, 'pv', 2],
+    ['Charge cut-off current', 48, 'x', 0.001, 'A'], ['Sleep voltage', 49, 'x', 0.001, 'V'], ['Sleep delay', 50, 'x', 1, 'min'], ['Low SOC alarm', 52, 'x', 1, '%']]],
 ];
 
 /* ================= state ================= */
@@ -704,7 +726,36 @@ function processFrame(f) {
   if (f.error !== undefined) { log('BMS returned Modbus error ' + f.error); return; }
   S.frames++; if (!f.crc) S.crcFails++;
   if (f.kind !== 'live') log(`← ${f.kind} block, ${f.regs.length} registers${f.crc ? '' : ' (CRC mismatch, accepted)'}`);
-  handleFrame(f);
+  try { handleFrame(f); } catch (e) { log('Error handling ' + f.kind + ' block: ' + e.message); }
+}
+
+function handleFrame(f) {
+  const shanmu = S.proto === PROTO.shanmu;
+  if (f.kind === 'live') {
+    const d = shanmu ? decodeShanmu(f.regs) : decodePace(f.regs);
+    d.raw = f.regs;
+    if (S.lastLive === 0) log('First reading: ' + d.v.toFixed(2) + ' V, ' + d.soc + ' %, ' + d.cells.length + ' cells');
+    S.lastLive = Date.now();
+    setLive(d);
+    setPill('live', 'Live');
+    if (S.settings) renderSettings();
+  } else if (f.kind === 'settings') {
+    S.settings = f.regs; renderSettings();
+  } else if (f.kind === 'info') {
+    if (shanmu) { S.info.firmware = ascii(f.bytes.slice(0, 30)); S.info.model = ascii(f.bytes.slice(30, 60)); S.info.packSn = ascii(f.bytes.slice(60, 90)); }
+    else { S.info.firmware = ascii(f.bytes.slice(0, 20)); S.info.model = ascii(f.bytes.slice(20, 40)); }
+    renderInfo();
+  } else if (f.kind === 'proto') {
+    S.info.protocol = ascii(f.bytes.slice(0, 10)); renderInfo();
+  }
+}
+
+function setLive(d) {
+  if ($('#flipSign').checked) d.a = -d.a;
+  d.w = d.v * d.a;
+  S.live = d;
+  if (!S.demo) recordHistory(d);
+  render();
 }
 
 /* ================= history ================= */
@@ -843,7 +894,29 @@ function render() {
   kv.innerHTML = `<dt>Status register</dt><dd>${d.status.toString(2).padStart(16, '0')}</dd><dt>Alarm register</dt><dd>${d.warn.toString(2).padStart(16, '0')}</dd><dt>Protection register</dt><dd>${d.prot.toString(2).padStart(16, '0')}</dd><dt>Frames received</dt><dd>${S.demo ? 'demo' : S.frames + (S.crcFails ? ` (${S.crcFails} with CRC mismatch)` : '')}</dd>`;
 }
 
+const fmtNum = (x, scale) => x.toFixed(scale >= 1 ? 0 : scale >= 0.1 ? 1 : scale >= 0.01 ? 2 : 3);
+function renderPaceSettings() {
+  const r = S.settings, host = $('#thresholds'), flags = S.live && S.live.raw ? S.live.raw[8] : 0;
+  host.textContent = '';
+  for (const [group, rows] of PACE_SETTINGS) {
+    const wrap = document.createElement('div'); wrap.className = 'tbl';
+    let html = `<table><thead><tr><th>${group}</th><th style="text-align:right">Value</th></tr></thead><tbody>`;
+    for (const [label, i, type, arg, unit] of rows) {
+      const v = r[i]; let txt = '--';
+      if (v !== undefined) {
+        if (type === 'pv') txt = (v / (bit(flags, arg) ? 1000 : 100)).toFixed(2) + ' V';
+        else if (type === 'c') txt = (i16(v) / 10).toFixed(1) + ' °C';
+        else if (type === 's') txt = fmtNum(i16(v) * arg, arg) + ' ' + unit;
+        else txt = fmtNum(v * arg, arg) + ' ' + unit;
+      }
+      html += `<tr><td>${label}</td><td class="num">${txt}</td></tr>`;
+    }
+    wrap.innerHTML = html + '</tbody></table>';
+    host.append(wrap);
+  }
+}
 function renderSettings() {
+  if (S.settings && S.proto === PROTO.pace && !S.demo) return renderPaceSettings();
   const r = S.settings, host = $('#thresholds'); if (!r) return;
   const at = a => r[a - 0x3c];
   host.textContent = '';
@@ -921,6 +994,8 @@ function stopDemo() {
 }
 
 /* ================= wiring ================= */
+addEventListener('error', e => log('Error: ' + e.message));
+addEventListener('unhandledrejection', e => log('Error: ' + ((e.reason && e.reason.message) || e.reason)));
 async function setWake(on) {
   try {
     if (on && 'wakeLock' in navigator) { S.wakeLock = await navigator.wakeLock.request('screen'); }
