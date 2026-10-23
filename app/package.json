@@ -2,7 +2,7 @@
   "name": "cellwatch",
   "private": true,
   "version": "1.0.0",
-  "description": "Android wrapper for Cellwatch",
+  "description": "Android wrapper for Ferro",
   "scripts": {
     "build:web": "node build-web.mjs"
   },

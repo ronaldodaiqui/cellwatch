@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f1413" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#eef1ef" media="(prefers-color-scheme: light)">
-<title>Cellwatch</title>
+<title>Ferro</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -196,7 +196,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
 
   <header class="top">
     <div class="brand">
-      <h1>Cellwatch</h1>
+      <h1>Ferro</h1>
       <span class="dev" id="devName">No battery connected</span>
     </div>
     <div class="actions">
@@ -239,7 +239,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
         <div><dt>Net</dt><dd id="eNet">--</dd></div>
       </dl>
       <div class="ebox"><canvas id="eChart" role="img" aria-label="Energy in and out per day, last 7 days"></canvas></div>
-      <p class="note">Measured at the battery. Charged is what went into it, used is what it supplied. Bars above the line are energy in, below are energy out, and the hours under each day are how long Cellwatch was reading.</p>
+      <p class="note">Measured at the battery. Charged is what went into it, used is what it supplied. Bars above the line are energy in, below are energy out, and the hours under each day are how long Ferro was reading.</p>
     </section>
 
     <section class="card" aria-labelledby="hHist">
@@ -256,7 +256,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
         </div>
         <div class="actions"><button class="small" id="btnCsv">Export CSV</button><button class="small" id="btnClearHist">Clear</button></div>
       </div>
-      <p class="note" id="histNote">Cellwatch keeps every reading for 24 hours and one-minute averages for 30 days, saved on this phone. It records only while the app is open and connected, so gaps in the chart are times it wasn't.</p>
+      <p class="note" id="histNote">Ferro keeps every reading for 24 hours and one-minute averages for 30 days, saved on this phone. It records only while the app is open and connected, so gaps in the chart are times it wasn't.</p>
     </section>
   </main>
 
@@ -294,7 +294,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
           <label class="check"><input type="checkbox" id="flipSign"> Current sign is reversed</label>
         </div>
       </div>
-      <p class="note">Rated capacity is only needed if your battery doesn't report its own amp-hours. Cellwatch then uses it with the state of charge to estimate time remaining.</p>
+      <p class="note">Rated capacity is only needed if your battery doesn't report its own amp-hours. Ferro then uses it with the state of charge to estimate time remaining.</p>
     </section>
 
     <details class="card" id="thrBox">
@@ -306,7 +306,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
 
     <details class="card" id="diag">
       <summary><h2>Diagnostics</h2></summary>
-      <p class="note">Registers the battery sends that Cellwatch doesn't display yet.</p>
+      <p class="note">Registers the battery sends that Ferro doesn't display yet.</p>
       <div class="tbl"><table><thead><tr><th>Register</th><th style="text-align:right">Hex</th><th style="text-align:right">Decimal</th><th style="text-align:right">÷ 100</th></tr></thead><tbody id="rawRegs"></tbody></table></div>
       <dl class="kv" id="diagKv"></dl>
       <div class="card-h"><span class="note">Packet log</span><div class="actions"><button class="small" id="btnCopyLog">Copy log</button></div></div>
@@ -1225,7 +1225,7 @@ async function init() {
     $('#btnConnect').disabled = true;
     setBanner('err', !window.isSecureContext
       ? 'Bluetooth needs a secure page. Open this over https or as a local file in Chrome or Edge.'
-      : 'This browser has no Bluetooth support. Use Chrome or Edge on Android, Mac, Windows or ChromeOS, or install the Cellwatch Android app. Showing demo data.');
+      : 'This browser has no Bluetooth support. Use Chrome or Edge on Android, Mac, Windows or ChromeOS, or install the Ferro Android app. Showing demo data.');
   }
   startDemo();
   log('Ready.');
