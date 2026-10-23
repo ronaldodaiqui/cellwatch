@@ -16,6 +16,7 @@
   --accent:#0b6e6a; --accent-soft:#d9efed; --accent-ink:#ffffff;
   --good:#23804f; --good-soft:#dcf0e4; --warn:#9c6600; --warn-soft:#f7ebcc; --bad:#bf3a2e; --bad-soft:#f8dfdb;
   --track:#e3e8e6;
+  --c1:#0b6e6a; --c2:#c2410c; --c3:#6d28d9; --c4:#1d4ed8; --c5:#be185d; --c6:#4d7c0f; --c7:#a16207; --c8:#0e7490;
   --display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
   --sans:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -27,6 +28,7 @@
     --accent:#4cc2bb; --accent-soft:#16302e; --accent-ink:#06201e;
     --good:#56c98a; --good-soft:#15301f; --warn:#e6b44a; --warn-soft:#33290f; --bad:#f07064; --bad-soft:#3a1a17;
     --track:#222b28; color-scheme:dark;
+    --c1:#4cc2bb; --c2:#fb923c; --c3:#a78bfa; --c4:#60a5fa; --c5:#f472b6; --c6:#a3e635; --c7:#facc15; --c8:#22d3ee;
   }
 }
 :root[data-theme="dark"]{
@@ -34,6 +36,7 @@
   --accent:#4cc2bb; --accent-soft:#16302e; --accent-ink:#06201e;
   --good:#56c98a; --good-soft:#15301f; --warn:#e6b44a; --warn-soft:#33290f; --bad:#f07064; --bad-soft:#3a1a17;
   --track:#222b28; color-scheme:dark;
+  --c1:#4cc2bb; --c2:#fb923c; --c3:#a78bfa; --c4:#60a5fa; --c5:#f472b6; --c6:#a3e635; --c7:#facc15; --c8:#22d3ee;
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -178,6 +181,11 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
 .etoday dd{margin:2px 0 0;font:500 24px/1.15 var(--display);font-variant-numeric:tabular-nums;white-space:nowrap}
 .etoday dd.pos{color:var(--good)}
 .ebox{position:relative;height:170px}
+/* cell balance */
+.balbox{position:relative;height:300px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font:12.5px var(--mono);color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:12px;height:3px;border-radius:2px;display:inline-block}
 /* diagnose */
 .dtable td{vertical-align:top}
 .dtable td:first-child{color:var(--muted);white-space:nowrap;padding-right:14px}
@@ -276,6 +284,19 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
         <div class="actions"><button class="small" id="btnCsv">Export CSV</button><button class="small" id="btnClearHist">Clear</button></div>
       </div>
       <p class="note" id="histNote">Ferro keeps every reading for 24 hours and one-minute averages for 30 days, saved on this phone. It records only while the app is open and connected, so gaps in the chart are times it wasn't.</p>
+    </section>
+
+    <section class="card" aria-labelledby="hBal">
+      <div class="card-h">
+        <h2 id="hBal">Cell balance</h2>
+        <div class="seg" role="group" aria-label="Cell balance time window" id="segCellWin">
+          <button data-w="21600000" aria-pressed="false">6 h</button><button data-w="86400000" aria-pressed="true">24 h</button><button data-w="604800000" aria-pressed="false">7 d</button><button data-w="2592000000" aria-pressed="false">30 d</button>
+        </div>
+      </div>
+      <div class="balbox"><canvas id="cellChart" role="img" aria-label="Cell voltages (top) and largest difference between cells (bottom) over time"></canvas></div>
+      <div class="legend" id="cellLegend"></div>
+      <div class="card-h"><span class="note" id="cellNote"></span><button class="small" id="btnCellCsv">Export CSV</button></div>
+      <p class="note">One-minute averages of each cell, kept for 30 days. The bottom strip is the largest gap between cells in each minute. If balancing is working, the gap measured near the top of charge should shrink over days and weeks. At rest, compare like with like, since the gap reads larger near full and smaller in the middle.</p>
     </section>
   </main>
 
@@ -456,7 +477,7 @@ const WARN = ['Cell overvoltage', 'Cell undervoltage', 'Pack overvoltage', 'Pack
 const PROT = ['Cell overvoltage', 'Cell undervoltage', 'Pack overvoltage', 'Pack undervoltage', 'Charge overcurrent', 'Discharge overcurrent', 'Short circuit',
   'Charger overvoltage', 'Charge high temp', 'Discharge high temp', 'Charge low temp', 'Discharge low temp', 'MOSFET high temp', 'Ambient high temp', 'Ambient low temp'];
 const FAULT = { 0: 'Charge MOSFET fault', 1: 'Discharge MOSFET fault', 2: 'Temperature sensor fault', 4: 'Cell fault', 5: 'Front-end sampling fault' };
-const unlabelledBits = (v, b) => { const known = new Set([0, 1, 2, 4, 5, b.chg, b.dsg, b.acin, b.heat]); const out = []; for (let i = 0; i < 16; i++) if (bit(v, i) && !known.has(i)) out.push(i); return out; };
+const unlabelledBits = (v, b) => { const known = new Set([0, 1, 2, 4, 5, b.chg, b.dsg, b.acin, b.heat, ...Object.keys(b.spec || {}).map(Number)]); const out = []; for (let i = 0; i < 16; i++) if (bit(v, i) && !known.has(i)) out.push(i); return out; };
 const hex4 = v => '0x' + (v ?? 0).toString(16).toUpperCase().padStart(4, '0');
 const bin16 = v => (v ?? 0).toString(2).padStart(16, '0').replace(/(.{4})(?=.)/g, '$1 ');
 const names = (v, list) => list.map((n, i) => n && bit(v, i) ? n : null).filter(Boolean);
@@ -491,7 +512,7 @@ function decodePace(r) {
     mos: r[57] !== 0xffff ? i16(r[57]) / 10 : null,
     chg: bit(status, 10), dsg: bit(status, 11), heat: bit(status, 15), acin: bit(status, 13), balance: r[12],
     unmapped: [8, 12, 13, 14, 58].map(i => [i, r[i]]),
-    src: { a: 'reg 0, signed, ×10 mA', v: 'reg 1, ×10 mV', soc: 'reg 2', status: 11, warn: 9, prot: 10, bal: 12, bits: { chg: 10, dsg: 11, acin: 13, heat: 15 }, cells: 'regs 16–45', temps: 'regs 47–57' },
+    src: { a: 'reg 0, signed, ×10 mA', v: 'reg 1, ×10 mV', soc: 'reg 2', status: 11, warn: 9, prot: 10, bal: 12, bits: { chg: 10, dsg: 11, acin: 13, heat: 15, spec: { 8: 'Charging state', 9: 'Discharging state', 12: 'Charge limiter on', 14: 'Charger reversed' } }, cells: 'regs 16–45', temps: 'regs 47–57' },
   };
   // Pace's published map puts SOH and capacities (10 mAh units) in 3–6. SMB Link never shows them, so accept only sane values.
   const rem = r[4] / 100, full = r[5] / 100;
@@ -555,7 +576,7 @@ const PACE_SETTINGS = [
 const S = {
   demo: true, device: null, proto: null, rx: null, tx: null, userClosed: false, reconnectTry: 0,
   live: null, settings: null, info: {}, lastLive: 0, frames: 0, crcFails: 0,
-  hist: [], histMin: [], bucket: null, events: [], recentA: [], prevDiag: null, eIn: 0, eOut: 0, lastET: 0, demoHist: [], logLines: [], rawSeen: 0, devName: '', active: false, pollTimer: null, wakeLock: null,
+  hist: [], histMin: [], bucket: null, cellMin: [], cellBucket: null, cellWin: 86400000, events: [], recentA: [], prevDiag: null, eIn: 0, eOut: 0, lastET: 0, demoHist: [], logLines: [], rawSeen: 0, devName: '', active: false, pollTimer: null, wakeLock: null,
   series: 'w', win: 3600000,
 };
 const store = {
@@ -836,6 +857,7 @@ function handleFrame(f) {
   } else if (f.kind === 'info') {
     if (shanmu) { S.info.firmware = ascii(f.bytes.slice(0, 30)); S.info.model = ascii(f.bytes.slice(30, 60)); S.info.packSn = ascii(f.bytes.slice(60, 90)); }
     else { S.info.firmware = ascii(f.bytes.slice(0, 20)); S.info.model = ascii(f.bytes.slice(20, 40)); }
+    S.info.raw = ascii(f.bytes.map(b => (b >= 32 && b < 127) ? b : 46)).replace(/\.{2,}/g, ' … ');
     renderInfo();
   } else if (f.kind === 'proto') {
     S.info.protocol = ascii(f.bytes.slice(0, 10)); renderInfo();
@@ -858,8 +880,8 @@ const DB = {
   open() {
     return new Promise(ok => {
       try {
-        const r = indexedDB.open('cellwatch', 2);
-        r.onupgradeneeded = () => { const d = r.result; for (const n of ['fine', 'min', 'diag', 'events']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n); };
+        const r = indexedDB.open('cellwatch', 3);
+        r.onupgradeneeded = () => { const d = r.result; for (const n of ['fine', 'min', 'diag', 'events', 'cells']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n); };
         r.onsuccess = () => { this.db = r.result; ok(true); };
         r.onerror = () => ok(false);
       } catch (e) { ok(false); }
@@ -899,6 +921,8 @@ async function loadHistory() {
   S.hist = (await DB.all('fine')).filter(p => p[0] >= now - FINE_KEEP);
   S.histMin = (await DB.all('min')).filter(p => p[0] >= now - MIN_KEEP);
   DB.prune('diag', now - DIAG_KEEP); DB.prune('events', now - EVT_KEEP);
+  DB.prune('cells', now - MIN_KEEP);
+  { const ks = await DB.range('cells', now - MIN_KEEP, now); S.cellMin = ks; }
   S.events = (await DB.all('events')).filter(e => e && e.t >= now - EVT_KEEP).sort((a, b) => b.t - a.t);
   if (Array.isArray(old)) for (const p of old) addToMinute(p);
   log(`History loaded: ${S.hist.length} readings, ${S.histMin.length} minutes`);
@@ -1066,13 +1090,15 @@ function diagRecord(d, regs) {
   const t = Date.now();
   DB.putKV('diag', t, { p: S.proto === PROTO.shanmu ? 'shanmu' : 'pace', r: Uint16Array.from(regs) });
   detectEvents(d, t);
-  if (t - (S.lastPrune || 0) > 3600000) { S.lastPrune = t; DB.prune('diag', t - DIAG_KEEP); DB.prune('events', t - EVT_KEEP); }
+  cellMinuteAdd(d, t);
+  if (t - (S.lastPrune || 0) > 3600000) { S.lastPrune = t; DB.prune('diag', t - DIAG_KEEP); DB.prune('events', t - EVT_KEEP); DB.prune('cells', t - MIN_KEEP); }
 }
 
 function detectEvents(d, t) {
   const p = S.prevDiag, fl = d.status & 0x37;
   S.recentA.push(d.a); if (S.recentA.length > 4) S.recentA.shift();
-  S.prevDiag = { chg: d.chg, dsg: d.dsg, acin: d.acin, warn: d.warn, prot: d.prot, fl };
+  const unk = Object.fromEntries(d.unmapped);
+  S.prevDiag = { chg: d.chg, dsg: d.dsg, acin: d.acin, warn: d.warn, prot: d.prot, status: d.status, fl, bal: d.balance, unk };
   if (!p) return;
   const items = [];
   if (p.chg !== d.chg) items.push([d.chg ? 'good' : 'bad', `Charge MOSFET turned ${d.chg ? 'on' : 'off'}`]);
@@ -1082,6 +1108,14 @@ function detectEvents(d, t) {
   diff(p.prot, d.prot, PROT, 'protection');
   diff(p.warn, d.warn, WARN, 'alarm');
   for (const [bi, n] of Object.entries(FAULT)) if (bit(p.fl, +bi) !== bit(fl, +bi)) items.push([bit(fl, +bi) ? 'bad' : 'good', `${n} ${bit(fl, +bi) ? 'on' : 'cleared'}`]);
+  const s = d.src, spec = s.bits.spec || {};
+  const bitChange = (a, b, i, what) => { if (bit(a, i) !== bit(b, i)) items.push(['', `${what} turned ${bit(b, i) ? 'on' : 'off'}`]); };
+  [6, 7].forEach(i => bitChange(p.warn, d.warn, i, `Undocumented alarm bit ${i} (reg ${s.warn})`));
+  bitChange(p.prot, d.prot, 15, `Undocumented protection bit 15 (reg ${s.prot})`);
+  for (const i of unlabelledBits(p.status | d.status, s.bits)) bitChange(p.status, d.status, i, `Undocumented status bit ${i} (reg ${s.status})`);
+  for (const i of [12, 14]) if (spec[i]) bitChange(p.status, d.status, i, `${spec[i]} (reg ${s.status} bit ${i}, Pace spec)`);
+  if (d.balance !== null && d.balance !== undefined && p.bal !== d.balance) items.push(['', `Balance status register changed ${hex4(p.bal)} → ${hex4(d.balance)}`]);
+  for (const [i, v] of d.unmapped) if (i !== s.bal && p.unk[i] !== undefined && p.unk[i] !== v) items.push(['', `Unknown reg ${i} changed ${hex4(p.unk[i])} → ${hex4(v)}`]);
   const prior = S.recentA.slice(0, -1);
   if (prior.length >= 3) {
     const avg = prior.reduce((x, y) => x + y, 0) / prior.length;
@@ -1097,6 +1131,38 @@ function detectEvents(d, t) {
   renderEvents();
 }
 
+// Balancing: everything the battery actually tells us, kept apart from what we calculate.
+function balanceInfo(d) {
+  const unk = '<b class="unk">Unknown</b>', out = {};
+  let start = null, delta = null;
+  if (S.settings && !S.demo) {
+    if (S.proto === PROTO.pace) { start = S.settings[45]; delta = S.settings[46]; }
+    else { start = S.settings[0x6f - 0x3c]; delta = S.settings[0x70 - 0x3c]; }
+  }
+  out.thr = start ? `Starts at ${(start / 1000).toFixed(3)} V, when cells differ by ${delta} mV or more` : unk + '<span class="src">Read from the settings block after connecting</span>';
+  out.thrSrc = S.proto === PROTO.pace ? 'settings regs 128–129' + tagH('vendor') : 'settings regs 0x6F–0x70' + tagH('vendor');
+  const ext = cellExt(d.cells);
+  if (start && ext) {
+    const met = ext.max >= start / 1000 && ext.diff >= delta;
+    out.cond = (met ? '<b>Met</b>' : '<b>Not met</b>') + `<span class="src">Highest cell ${ext.max.toFixed(3)} V ${ext.max >= start / 1000 ? '≥' : '<'} ${(start / 1000).toFixed(3)} V, difference ${ext.diff} mV ${ext.diff >= delta ? '≥' : '<'} ${delta} mV. This only says the voltage conditions are satisfied. It doesn't show that balancing is running; the BMS may also require charging current or other conditions it doesn't report.</span>`;
+  } else out.cond = unk;
+  if (d.balance === null || d.balance === undefined) {
+    out.active = unk + '<span class="src">This BMS type has no balance-status register.</span>'; out.cells = unk; out.activeSrc = ''; return out;
+  }
+  out.activeSrc = `reg 12 = ${hex4(d.balance)}` + tagH('Pace spec');
+  if (!d.balance) {
+    out.active = unk + '<span class="src">Reg 12 reads 0x0000. That would mean no cell is balancing if this firmware fills the register in. It hasn\'t been seen non-zero on your battery yet, so it can\'t be told apart from a register that is never used.</span>';
+    out.cells = 'None reported';
+    return out;
+  }
+  const direct = [], swapped = [];
+  for (let i = 0; i < 16; i++) if (bit(d.balance, i)) { direct.push('C' + (i + 1)); swapped.push('C' + (i < 8 ? i + 9 : i - 7)); }
+  const n = d.cells.length, fits = direct.every(c => +c.slice(1) <= n), fitsSwap = swapped.every(c => +c.slice(1) <= n);
+  out.active = '<b class="unk">Probably</b><span class="src">Reg 12 is non-zero. Pace\'s spec names it "Balance status" but doesn\'t define the bits.</span>';
+  out.cells = `<b>${fits ? direct.join(', ') : fitsSwap ? swapped.join(', ') : direct.join(', ')}</b><span class="src">Assuming ${fits ? 'bit 0 = cell 1' : fitsSwap ? 'the two bytes are swapped (seen on some Pace firmware)' : 'bit 0 = cell 1, though that names cells this pack doesn\'t have'}. Unverified.</span>`;
+  return out;
+}
+
 function renderDiag() {
   if ($('#view-diagnose').hidden) return;
   const d = S.live, rows = $('#dRows'), regs = $('#dRegs'), verdict = $('#dVerdict');
@@ -1110,11 +1176,16 @@ function renderDiag() {
   const signNote = $('#flipSign').checked ? 'Sign flipped in Setup' : '+ means into the battery (Pace convention, not yet confirmed on your battery)';
   const al = names(d.warn, WARN), pr = names(d.prot, PROT), fa = faults(d.status);
   const list = (arr, cls) => arr.length ? arr.map(x => `<b class="${cls}">${esc(x)}</b>`).join('<br>') : 'None';
-  let bal = [unk + '<span class="src">This BMS type doesn\'t report balancing</span>', '—'];
-  if (d.balance !== null && d.balance !== undefined) {
-    const on = []; for (let i = 0; i < 16; i++) if (bit(d.balance, i)) on.push('C' + (i + 1));
-    bal = [unk + `<span class="src">Reg ${s.bal} reads ${hex4(d.balance)}${on.length ? ` (would mean ${on.join(', ')} balancing)` : ''}. Pace's map calls it a per-cell balance mask, but that isn't verified on your battery yet.</span>`, `reg ${s.bal}` + P];
-  }
+  const T = tagH('Pace spec'), bi = balanceInfo(d);
+  const balRows = [
+    ['Balancing enabled', unk + '<span class="src">Neither Pace\'s Modbus spec nor SMB Link has an on/off setting for balancing, so the battery can\'t tell us.</span>', 'Pace spec V1.3, SMB Link'],
+    ['Balancing active', bi.active, bi.activeSrc],
+    ['Cells balancing', bi.cells, bi.activeSrc],
+    ['Balancing current', '<b class="unk">Not reported</b><span class="src">The protocol has no balancing-current value.</span>', ''],
+    ['Balancing blocked by', '<b class="unk">Not reported</b><span class="src">The protocol has no field for why balancing isn\'t running.</span>', ''],
+    ['Balancing thresholds', bi.thr, bi.thrSrc],
+    ['Threshold conditions', bi.cond, C],
+  ];
   const temps = d.temps.length ? d.temps.map((t, i) => `T${i + 1} ${degF(t)} °F`).join(', ') : unk;
   const R = [
     ['Pack voltage', `${d.v.toFixed(2)} V`, s.v + V],
@@ -1126,7 +1197,7 @@ function renderDiag() {
     ['Highest cell', ext ? `${ext.max.toFixed(3)} V (C${ext.mx + 1})` : unk, s.cells + V],
     ['Lowest cell', ext ? `${ext.min.toFixed(3)} V (C${ext.mn + 1})` : unk, s.cells + V],
     ['Cell difference', ext ? `${ext.diff} mV` : unk, C],
-    ['Balancing', bal[0], bal[1]],
+    ...balRows,
     ['Active alarms', list(al, 'unk'), `reg ${s.warn} = ${hex4(d.warn)}` + V],
     ['Active protections', list(pr, 'off'), `reg ${s.prot} = ${hex4(d.prot)}` + V],
     ['Active faults', list(fa, 'off'), `reg ${s.status} bits 0–5` + V],
@@ -1140,14 +1211,15 @@ function renderDiag() {
   verdict.textContent = blocked ? 'BMS has cut charging' : 'BMS charge path open';
 
   const ul = unlabelledBits(d.status, b);
-  const statusDec = [`Charge MOSFET ${d.chg ? 'on' : 'off'} (bit ${b.chg})`, `Discharge MOSFET ${d.dsg ? 'on' : 'off'} (bit ${b.dsg})`, `Acin ${d.acin ? 'on' : 'off'} (bit ${b.acin})`, `Heater ${d.heat ? 'on' : 'off'} (bit ${b.heat})`]
-    .concat(fa).concat(ul.length ? [`Unlabelled bits set: ${ul.join(', ')}`] : []);
+  const specDec = Object.entries(b.spec || {}).map(([i, n]) => `${n}: ${bit(d.status, +i) ? 'yes' : 'no'} (bit ${i}, Pace spec only)`);
+  const statusDec = [`Charge MOSFET ${d.chg ? 'on' : 'off'} (bit ${b.chg})`, `Discharge MOSFET ${d.dsg ? 'on' : 'off'} (bit ${b.dsg})`, `Acin ${d.acin ? 'on' : 'off'} (bit ${b.acin}, SMB Link label; Pace spec says reserved)`, `Heater ${d.heat ? 'on' : 'off'} (bit ${b.heat})`]
+    .concat(specDec).concat(fa).concat(ul.length ? [`Undocumented bits set: ${ul.join(', ')}`] : []);
   const warnExtra = [6, 7].filter(i => bit(d.warn, i)), protExtra = bit(d.prot, 15) ? [15] : [];
   const regRow = (label, v, dec) => `<tr><td>${label}<span class="src nowrap">${hex4(v)}</span><span class="src nowrap">${bin16(v)}</span></td><td>${dec}</td></tr>`;
   let html = regRow(`Alarms (reg ${s.warn})`, d.warn, (al.length ? al.map(esc).join(', ') : 'None') + (warnExtra.length ? `<span class="src">Unlabelled bits set: ${warnExtra.join(', ')}</span>` : ''))
-    + regRow(`Protections (reg ${s.prot})`, d.prot, (pr.length ? pr.map(esc).join(', ') : 'None') + (protExtra.length ? '<span class="src">Unlabelled bit 15 set</span>' : ''))
+    + regRow(`Protections (reg ${s.prot})`, d.prot, (pr.length ? pr.map(esc).join(', ') : 'None') + (protExtra.length ? '<span class="src">Bit 15 is set. Pace\'s spec calls it reserved and SMB Link ignores it, so its meaning is unknown.</span>' : ''))
     + regRow(`Status (reg ${s.status})`, d.status, statusDec.map(esc).join('<br>'));
-  if (d.balance !== null && d.balance !== undefined) html += regRow(`Balance? (reg ${s.bal})`, d.balance, 'Unverified meaning (Pace map: one bit per cell)');
+  if (d.balance !== null && d.balance !== undefined) html += regRow(`Balance status (reg ${s.bal})`, d.balance, 'Named "Balance status" in Pace\'s spec, with no bit definitions. One bit per cell is likely but unverified.');
   for (const [i, v] of d.unmapped) if (i !== s.bal) html += regRow(`Reg ${i}`, v, 'Unknown');
   regs.innerHTML = html;
 }
@@ -1231,6 +1303,91 @@ async function exportDiag(span) {
   const stamp = new Date(to).toLocaleString('sv-SE').replace(/[: ]/g, '-').slice(0, 16);
   try { await saveFile(`ferro-diagnostics-${stamp}.csv`, out.join('\n') + '\n'); st.textContent = `Exported ${dec.length.toLocaleString()} readings.`; }
   catch (e) { st.textContent = 'Export failed: ' + (e.message || e); log('Export failed: ' + (e.message || e)); }
+}
+
+/* ================= cell balance history ================= */
+// One-minute averages per cell for 30 days, built from the readings Ferro already takes (no extra Bluetooth traffic).
+function cellMinuteAdd(d, t) {
+  if (!d.cells.length) return;
+  const m = Math.floor(t / 60000) * 60000;
+  let b = S.cellBucket;
+  if (!b || b.t !== m || b.c.length !== d.cells.length) b = S.cellBucket = { t: m, n: 0, v: 0, a: 0, c: d.cells.map(() => 0), d: 0, bal: 0, warn: 0, prot: 0 };
+  b.n++; b.v += d.v; b.a += d.a; d.cells.forEach((c, i) => { b.c[i] += c; });
+  b.d = Math.max(b.d, cellExt(d.cells).diff);
+  b.bal |= d.balance || 0; b.warn |= d.warn; b.prot |= d.prot;
+  const rec = { v: +(b.v / b.n).toFixed(3), a: +(b.a / b.n).toFixed(2), c: b.c.map(x => +(x / b.n).toFixed(4)), d: b.d,
+    bal: d.balance === null || d.balance === undefined ? null : b.bal, warn: b.warn, prot: b.prot };
+  const last = S.cellMin[S.cellMin.length - 1];
+  if (last && last[0] === m) last[1] = rec; else S.cellMin.push([m, rec]);
+  while (S.cellMin.length && S.cellMin[0][0] < t - MIN_KEEP) S.cellMin.shift();
+  DB.putKV('cells', m, rec);
+  if (!$('#view-history').hidden && t - (S.cellDrawn || 0) > 10000) { S.cellDrawn = t; drawCells(); }
+}
+
+function drawCells() {
+  const cv = $('#cellChart'), box = cv.parentElement, W = box.clientWidth, H = box.clientHeight, dpr = window.devicePixelRatio || 1;
+  if (!W) return;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
+  g.font = '11px ' + css.getPropertyValue('--mono'); g.textBaseline = 'middle';
+  const now = Date.now(), t0 = now - S.cellWin, src = S.cellMin.filter(p => p[0] >= t0);
+  const leg = $('#cellLegend');
+  if (src.length < 2) {
+    g.fillStyle = col('--muted'); g.textAlign = 'center';
+    g.fillText(S.demo ? 'Connect your battery to start recording cells' : 'Collecting readings…', W / 2, H / 2);
+    leg.textContent = ''; $('#cellNote').textContent = ''; return;
+  }
+  const n = Math.max(...src.map(p => p[1].c.length));
+  let lo = Infinity, hi = -Infinity, dmax = 0;
+  for (const [, r] of src) { r.c.forEach(c => { lo = Math.min(lo, c); hi = Math.max(hi, c); }); dmax = Math.max(dmax, r.d); }
+  if (hi - lo < 0.02) { const m = (hi + lo) / 2; lo = m - 0.01; hi = m + 0.01; }
+  const vs = niceStep((hi - lo) / 4); lo = Math.floor(lo / vs) * vs; hi = Math.ceil(hi / vs) * vs;
+  const ds = niceStep(Math.max(dmax, 10) / 2), dhi = Math.ceil(Math.max(dmax, 10) / ds) * ds;
+  const padL = 46, padR = 8, padT = 10, padB = 22, gap = 18, pw = W - padL - padR, total = H - padT - padB - gap;
+  const h1 = total * 0.7, h2 = total - h1, y2top = padT + h1 + gap;
+  const X = t => padL + (t - t0) / S.cellWin * pw, Y = v => padT + (1 - (v - lo) / (hi - lo)) * h1, Y2 = v => y2top + (1 - v / dhi) * h2;
+  g.strokeStyle = col('--line'); g.lineWidth = 1; g.fillStyle = col('--muted'); g.textAlign = 'right';
+  for (let v = lo; v <= hi + vs / 2; v += vs) { const y = Math.round(Y(v)) + .5; g.beginPath(); g.moveTo(padL, y); g.lineTo(W - padR, y); g.stroke(); g.fillText(v.toFixed(vs < 0.01 ? 3 : 2), padL - 6, y); }
+  for (const v of [0, dhi / 2, dhi]) { const y = Math.round(Y2(v)) + .5; g.beginPath(); g.moveTo(padL, y); g.lineTo(W - padR, y); g.stroke(); g.fillText(String(Math.round(v)), padL - 6, y); }
+  g.textAlign = 'left'; g.fillText('V', 4, padT); g.fillText('mV', 4, y2top + 2);
+  const long = S.cellWin > FINE_KEEP;
+  [0, .5, 1].forEach(f => { const t = t0 + f * S.cellWin; g.textAlign = f === 0 ? 'left' : f === 1 ? 'right' : 'center'; g.fillText(f === 1 ? 'now' : long ? new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' }) : new Date(t).toTimeString().slice(0, 5), padL + f * pw, H - 8); });
+  const segs = []; let cur = [];
+  src.forEach((p, i) => { if (i && p[0] - src[i - 1][0] > 5 * 60000) { segs.push(cur); cur = []; } cur.push(p); }); segs.push(cur);
+  for (const sgm of segs) {
+    if (sgm.length < 2) continue;
+    g.beginPath(); g.moveTo(X(sgm[0][0]), Y2(0)); sgm.forEach(p => g.lineTo(X(p[0]), Y2(p[1].d))); g.lineTo(X(sgm[sgm.length - 1][0]), Y2(0)); g.closePath();
+    g.fillStyle = col('--track'); g.fill();
+    g.beginPath(); sgm.forEach((p, i) => (i ? g.lineTo : g.moveTo).call(g, X(p[0]), Y2(p[1].d))); g.strokeStyle = col('--muted'); g.lineWidth = 1.5; g.stroke();
+    for (let c = 0; c < n; c++) {
+      g.beginPath(); let started = false;
+      for (const p of sgm) { const v = p[1].c[c]; if (v === undefined) continue; (started ? g.lineTo : g.moveTo).call(g, X(p[0]), Y(v)); started = true; }
+      g.strokeStyle = col('--c' + ((c % 8) + 1)); g.lineWidth = 1.75; g.lineJoin = 'round'; g.stroke();
+    }
+  }
+  const last = src[src.length - 1][1], first = src[0][1];
+  leg.innerHTML = last.c.map((v, i) => `<span><i style="background:var(--c${(i % 8) + 1})"></i>C${i + 1} ${v.toFixed(3)}</span>`).join('') + `<span><i style="background:var(--muted)"></i>Difference ${last.d} mV</span>`;
+  $('#cellNote').textContent = `Largest difference: ${first.d} mV at the start of this view, ${last.d} mV now.`;
+}
+
+async function exportCells() {
+  const t0 = Date.now() - S.cellWin, rows = S.cellMin.filter(p => p[0] >= t0);
+  if (!rows.length) { $('#cellNote').textContent = 'No cell readings in this period yet.'; return; }
+  const n = Math.max(...rows.map(p => p[1].c.length)), q = x => /[",\n]/.test(String(x)) ? '"' + String(x).replace(/"/g, '""') + '"' : String(x);
+  const head = ['minute_iso', 'minute_local', 'pack_v_avg', 'current_a_avg'];
+  for (let i = 1; i <= n; i++) head.push(`cell${i}_v_avg`);
+  head.push('max_diff_mv_in_minute', 'diff_of_averages_mv', 'balance_reg_or', 'alarm_reg_or', 'alarms', 'protection_reg_or', 'protections');
+  const out = [head.join(',')];
+  for (const [t, r] of rows) {
+    const row = [new Date(t).toISOString(), new Date(t).toLocaleString('sv-SE'), r.v, r.a];
+    for (let i = 0; i < n; i++) row.push(r.c[i] ?? '');
+    const e = cellExt(r.c);
+    row.push(r.d, e ? e.diff : '', r.bal === null ? 'unknown' : hex4(r.bal), hex4(r.warn), names(r.warn, WARN).join('; '), hex4(r.prot), names(r.prot, PROT).join('; '));
+    out.push(row.map(q).join(','));
+  }
+  try { await saveFile('ferro-cells-' + new Date().toLocaleString('sv-SE').replace(/[: ]/g, '-').slice(0, 16) + '.csv', out.join('\n') + '\n'); }
+  catch (e) { $('#cellNote').textContent = 'Export failed: ' + (e.message || e); }
 }
 
 /* ================= render ================= */
@@ -1345,7 +1502,7 @@ function renderInfo() {
   const i = S.info, rows = [['Battery', S.demo ? 'Demo battery' : S.devName || '--'], ['BMS type', S.demo ? 'Shanmu / Mottcell (demo)' : S.proto ? S.proto.label : '--'],
     ['Cycles', S.live ? String(S.live.cycles) : ''], ['Heater', S.live ? (S.live.heat ? 'On' : 'Off') : ''], ['Health', S.live && S.live.soh ? S.live.soh + '%' : ''],
     ['Design capacity', S.live && S.live.designAh ? S.live.designAh.toFixed(0) + ' Ah' : ''], ['Full capacity', S.live && S.live.fullAh ? S.live.fullAh.toFixed(1) + ' Ah' : ''],
-    ['Firmware', i.firmware], ['Model SN', i.model], ['Pack SN', i.packSn], ['Protocol version', i.protocol]];
+    ['Firmware', i.firmware], ['Model SN', i.model], ['Pack SN', i.packSn], ['Protocol version', i.protocol], ['Info block (all text)', i.raw]];
   $('#info').innerHTML = rows.filter(r => r[1]).map(([k, v]) => `<dt>${k}</dt><dd></dd>`).join('');
   const dds = $('#info').querySelectorAll('dd'); rows.filter(r => r[1]).forEach(([, v], n) => dds[n].textContent = v);
 }
@@ -1419,7 +1576,7 @@ function showView(name) {
   document.querySelectorAll('.tabs button').forEach(b => b.dataset.view === name ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
   store.set('view', name);
   scrollTo(0, 0);
-  if (name === 'history') drawChart();
+  if (name === 'history') { drawChart(); drawCells(); }
   if (name === 'diagnose') { renderDiag(); renderEvents(); updateLogInfo(); if ($('#diag').open) $('#log').textContent = S.logLines.slice(-200).join('\n'); }
 }
 
@@ -1446,6 +1603,10 @@ async function init() {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && $('#wake').checked) setWake(true); });
   $('#segSeries').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.series = b.dataset.k; store.set('series', S.series); document.querySelectorAll('#segSeries button').forEach(x => x.setAttribute('aria-pressed', x === b)); drawChart(); };
   $('#segWin').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.win = +b.dataset.w; store.set('win', S.win); document.querySelectorAll('#segWin button').forEach(x => x.setAttribute('aria-pressed', x === b)); drawChart(); };
+  S.cellWin = store.get('cellwin', 86400000);
+  document.querySelectorAll('#segCellWin button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.w === S.cellWin));
+  $('#segCellWin').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.cellWin = +b.dataset.w; store.set('cellwin', S.cellWin); document.querySelectorAll('#segCellWin button').forEach(x => x.setAttribute('aria-pressed', x === b)); drawCells(); };
+  $('#btnCellCsv').onclick = exportCells;
   $('#btnCsv').onclick = () => exportCsv().catch(e => log('Export failed: ' + e.message));
   document.querySelectorAll('[data-span]').forEach(b => b.onclick = () => exportDiag(+b.dataset.span));
   $('#btnClearHist').onclick = e => {
@@ -1460,7 +1621,7 @@ async function init() {
     setTimeout(() => e.target.textContent = 'Copy log', 1500);
   };
   $('#diag').addEventListener('toggle', () => { if ($('#diag').open) { $('#log').textContent = S.logLines.slice(-200).join('\n'); } });
-  addEventListener('resize', drawChart);
+  addEventListener('resize', () => { drawChart(); drawCells(); });
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', drawChart);
   if (!('wakeLock' in navigator)) $('#wakeRow').hidden = true;
 

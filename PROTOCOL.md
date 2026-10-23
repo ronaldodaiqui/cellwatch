@@ -69,6 +69,13 @@ A separate service, `11110001-1111-…`, with characteristics `…0002` (data) a
 
 ## Type 2: Pace
 
+Cross-checked against Pace's official **"PACE BMS Modbus Protocol for RS485 V1.3" (2017)**. That spec matches this battery for registers 0–14:
+- 9 warnings, 10 protections, 11 status/faults, **12 "Balance status"** (the spec gives no bit definitions), 13–14 reserved.
+- It does **not** match after register 14. V1.3 puts cells at 15–30 with no count register and starts the settings at 60, while this battery uses SMB Link's layout below. So this is a later Pace Modbus variant, and V1.3 is only trusted where the data agree.
+- V1.3 status bits that SMB Link doesn't use: 8 charging state, 9 discharging state, 12 charge limiter, 13 reserved (SMB Link calls it "Acin"), 14 charger reversed. Protection bit 15 and warning bits 6–7 are reserved in V1.3. SMB Link also drops protection bit 15.
+- Balancing: V1.3 and SMB Link both expose only the start voltage and start difference (here settings regs 128–129). Neither has an enable switch, balancing current, or inhibit reason.
+
+
 Plain Modbus (no prefix). The service is whichever one has notify + write characteristics; the app writes to the *last* characteristic.
 Requests: `01 03 00 00 00 3B`, `01 03 00 53 00 37`, `01 03 00 AA 00 23` (+ CRC). Slave address 1, function 0x03 only.
 Live: reg 0 current (int16, 10 mA), 1 voltage (10 mV), 2 SOC, 7 cycles, 9 alarms, 10 protections, 11 status, 15 cell count, 16–45 cells (mV, 30 slots), 46 temp count, 47–56 temps (int16, 0.1 °C), 57 MOSFET temp. Alarm and protection bits use the same tables as Shanmu (SMB Link uses one table for both).
