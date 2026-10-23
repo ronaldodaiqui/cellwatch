@@ -172,6 +172,12 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
 .devrow .dn{font-weight:600;grid-column:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .devrow .di{grid-column:1;font-size:12px;color:var(--muted)}
 .devrow .dr{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:12.5px;color:var(--muted)}
+/* energy */
+.etoday{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0}
+.etoday dt{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:500}
+.etoday dd{margin:2px 0 0;font:500 24px/1.15 var(--display);font-variant-numeric:tabular-nums;white-space:nowrap}
+.etoday dd.pos{color:var(--good)}
+.ebox{position:relative;height:170px}
 /* pages + bottom tabs */
 .wrap{padding-bottom:calc(88px + env(safe-area-inset-bottom,0px))!important}
 .view{display:grid;gap:14px;min-width:0}
@@ -225,6 +231,17 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
   </main>
 
   <main id="view-history" class="view" hidden>
+    <section class="card" aria-labelledby="hEnergy">
+      <div class="card-h"><h2 id="hEnergy">Energy</h2><span class="note" id="eCover"></span></div>
+      <dl class="etoday">
+        <div><dt>Charged</dt><dd id="eIn" class="pos">--</dd></div>
+        <div><dt>Used</dt><dd id="eOut">--</dd></div>
+        <div><dt>Net</dt><dd id="eNet">--</dd></div>
+      </dl>
+      <div class="ebox"><canvas id="eChart" role="img" aria-label="Energy in and out per day, last 7 days"></canvas></div>
+      <p class="note">Measured at the battery. Charged is what went into it, used is what it supplied. Bars above the line are energy in, below are energy out, and the hours under each day are how long Cellwatch was reading.</p>
+    </section>
+
     <section class="card" aria-labelledby="hHist">
       <div class="card-h">
         <h2 id="hHist">History</h2>
@@ -483,7 +500,7 @@ const PACE_SETTINGS = [
 const S = {
   demo: true, device: null, proto: null, rx: null, tx: null, userClosed: false, reconnectTry: 0,
   live: null, settings: null, info: {}, lastLive: 0, frames: 0, crcFails: 0,
-  hist: [], histMin: [], bucket: null, demoHist: [], logLines: [], rawSeen: 0, devName: '', active: false, pollTimer: null, wakeLock: null,
+  hist: [], histMin: [], bucket: null, eIn: 0, eOut: 0, lastET: 0, demoHist: [], logLines: [], rawSeen: 0, devName: '', active: false, pollTimer: null, wakeLock: null,
   series: 'w', win: 3600000,
 };
 const store = {
@@ -818,12 +835,16 @@ async function loadHistory() {
 }
 
 // Running average for the current minute; written to the database on every sample so nothing is lost on close.
-function addToMinute(p, save = true) {
+function addToMinute(p, save = true, eIn, eOut) {
   const m = Math.floor(p[0] / 60000) * 60000;
   let b = S.bucket;
-  if (!b || b.t !== m) b = S.bucket = { t: m, v: 0, a: 0, soc: 0, n: 0 };
+  if (!b || b.t !== m) {
+    const prev = S.histMin[S.histMin.length - 1], same = prev && prev[0] === m;
+    b = S.bucket = { t: m, v: 0, a: 0, soc: 0, n: 0, in: same ? prev[4] || 0 : 0, out: same ? prev[5] || 0 : 0, measured: eIn !== undefined };
+  }
   b.v += p[1]; b.a += p[2]; b.soc += p[3]; b.n++;
-  const avg = [m, +(b.v / b.n).toFixed(2), +(b.a / b.n).toFixed(2), Math.round(b.soc / b.n)];
+  if (eIn !== undefined) { b.in += eIn; b.out += eOut; } else { const wh = p[1] * p[2] * 5 / 3600; if (wh > 0) b.in += wh; else b.out -= wh; }
+  const avg = [m, +(b.v / b.n).toFixed(2), +(b.a / b.n).toFixed(2), Math.round(b.soc / b.n), +b.in.toFixed(3), +b.out.toFixed(3)];
   const last = S.histMin[S.histMin.length - 1];
   if (last && last[0] === m) S.histMin[S.histMin.length - 1] = avg; else S.histMin.push(avg);
   if (save) DB.put('min', avg);
@@ -831,10 +852,13 @@ function addToMinute(p, save = true) {
 
 function recordHistory(d) {
   const now = Date.now(), last = S.hist[S.hist.length - 1];
+  // Integrate energy on every live reading (about every 2 s); gaps over 30 s are not counted.
+  if (S.lastET && now - S.lastET < 30000) { const wh = d.w * (now - S.lastET) / 3.6e6; if (wh > 0) S.eIn += wh; else S.eOut -= wh; }
+  S.lastET = now;
   if (last && now - last[0] < 5000) return;
   const p = [now, +d.v.toFixed(2), +d.a.toFixed(2), d.soc];
   S.hist.push(p); DB.put('fine', p);
-  addToMinute(p);
+  addToMinute(p, true, S.eIn, S.eOut); S.eIn = 0; S.eOut = 0;
   while (S.hist.length && S.hist[0][0] < now - FINE_KEEP) S.hist.shift();
   while (S.histMin.length && S.histMin[0][0] < now - MIN_KEEP) S.histMin.shift();
   if (!$('#view-history').hidden) drawChart();
@@ -849,6 +873,7 @@ function exportCsv() {
 }
 
 function drawChart() {
+  renderEnergy();
   const cv = $('#chart'), box = cv.parentElement;
   const W = box.clientWidth, H = box.clientHeight, dpr = window.devicePixelRatio || 1;
   if (!W) return;
@@ -901,6 +926,58 @@ function drawChart() {
   const lp = src[src.length - 1]; g.fillStyle = col('--accent'); g.beginPath(); g.arc(X(lp[0]), Y(val(lp)), 3.5, 0, 7); g.fill();
 }
 function niceStep(raw) { const p = 10 ** Math.floor(Math.log10(raw || 1)), n = raw / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p; }
+
+/* ================= energy ================= */
+const dayKey = t => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
+const fmtE = wh => Math.abs(wh) >= 1000 ? (wh / 1000).toFixed(2) + ' kWh' : Math.round(wh) + ' Wh';
+function dailyEnergy() {
+  const days = new Map();
+  const add = (t, i, o, mins) => { const k = dayKey(t), e = days.get(k) || { in: 0, out: 0, min: 0 }; e.in += i; e.out += o; e.min += mins; days.set(k, e); };
+  if (S.demo) {
+    const H = S.demoHist;
+    for (let i = 1; i < H.length; i++) { const dt = H[i][0] - H[i - 1][0]; if (dt > 60000) continue; const wh = H[i][1] * H[i][2] * dt / 3.6e6; add(H[i][0], Math.max(wh, 0), Math.max(-wh, 0), dt / 60000); }
+  } else {
+    for (const p of S.histMin) {
+      let i = p[4], o = p[5];
+      if (i === undefined) { const wh = p[1] * p[2] / 60; i = Math.max(wh, 0); o = Math.max(-wh, 0); }
+      add(p[0], i, o, 1);
+    }
+    if (S.eIn || S.eOut) add(Date.now(), S.eIn, S.eOut, 0);
+  }
+  return days;
+}
+function renderEnergy() {
+  if ($('#view-history').hidden) return;
+  const days = dailyEnergy(), today = dayKey(Date.now()), t = days.get(today) || { in: 0, out: 0, min: 0 };
+  $('#eIn').textContent = fmtE(t.in); $('#eOut').textContent = fmtE(t.out);
+  const net = t.in - t.out; $('#eNet').textContent = (net > 0 ? '+' : net < 0 ? '−' : '') + fmtE(Math.abs(net));
+  $('#eNet').className = net > 0 ? 'pos' : '';
+  const h = t.min / 60; $('#eCover').textContent = t.min ? `Today · ${h >= 1 ? h.toFixed(1) + ' h' : Math.round(t.min) + ' min'} of readings` : 'No readings yet today';
+
+  const cv = $('#eChart'), box = cv.parentElement, W = box.clientWidth, H = box.clientHeight, dpr = window.devicePixelRatio || 1;
+  if (!W) return;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
+  const keys = []; for (let i = 6; i >= 0; i--) { const d = new Date(today); d.setDate(d.getDate() - i); keys.push(dayKey(d.getTime())); }
+  const vals = keys.map(k => days.get(k) || { in: 0, out: 0, min: 0 });
+  const max = Math.max(100, ...vals.map(v => Math.max(v.in, v.out)));
+  const padT = 14, padB = 34, mid = padT + (H - padT - padB) / 2, half = (H - padT - padB) / 2, cw = W / 7, bw = Math.min(26, cw * 0.5);
+  g.strokeStyle = col('--muted'); g.lineWidth = 1; g.beginPath(); g.moveTo(0, Math.round(mid) + .5); g.lineTo(W, Math.round(mid) + .5); g.stroke();
+  g.font = '11px ' + css.getPropertyValue('--mono'); g.textAlign = 'center'; g.textBaseline = 'middle';
+  vals.forEach((v, i) => {
+    const x = cw * i + cw / 2, hi = v.in / max * half, ho = v.out / max * half, isToday = i === 6;
+    g.fillStyle = col('--good'); g.globalAlpha = isToday ? 1 : .75; if (hi > 0) g.fillRect(x - bw / 2, mid - hi, bw, hi);
+    g.fillStyle = col('--accent'); if (ho > 0) g.fillRect(x - bw / 2, mid + 1, bw, ho);
+    g.globalAlpha = 1;
+    g.fillStyle = isToday ? col('--ink') : col('--muted');
+    g.fillText(isToday ? 'Today' : new Date(keys[i]).toLocaleDateString([], { weekday: 'short' }), x, H - 22);
+    g.fillStyle = col('--muted');
+    g.fillText(v.min ? (v.min >= 60 ? Math.round(v.min / 60) + 'h' : Math.round(v.min) + 'm') : '–', x, H - 8);
+  });
+  g.textAlign = 'left'; g.fillStyle = col('--muted');
+  g.fillText('▲ in ' + fmtE(max), 2, 7);
+}
 
 /* ================= render ================= */
 const fmtH = h => !isFinite(h) || h <= 0 ? null : h >= 48 ? (h / 24).toFixed(1) + ' days' : h >= 1 ? h.toFixed(1) + ' h' : Math.round(h * 60) + ' min';
