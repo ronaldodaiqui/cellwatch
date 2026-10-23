@@ -583,25 +583,48 @@ async function connect() {
   setPill('busy', S.reconnectTry ? 'Reconnecting…' : 'Connecting…');
   setBanner(null);
   try {
-    S.active = false;
+    S.active = false; S.proto = null; S.asm = null; S.detecting = false; S.rawSeen = 0; S.lastLive = 0;
     await BLE.connect(onDrop);
     S.active = true;
     const services = await BLE.services();
-    log('Services: ' + services.map(s => s.uuid.slice(4, 8)).join(', '));
-    let svc = services.find(s => s.uuid.startsWith('0000fffa'));
-    const proto = svc ? PROTO.shanmu : PROTO.pace;
-    if (!svc) svc = services.find(s => !/^0000(1800|1801|180a|180f)/.test(s.uuid) && !s.uuid.startsWith('11110001') && s.chars.some(c => c.props.notify) && s.chars.some(c => c.props.write || c.props.writeNR));
+    log('Services: ' + services.map(s => s.uuid.slice(4, 8) + '[' + s.chars.map(c => c.uuid.slice(4, 8) + ':' + (c.props.notify ? 'n' : '') + (c.props.write ? 'w' : '') + (c.props.writeNR ? 'W' : '')).join(' ') + ']').join(', '));
+    const usable = s => !/^0000(1800|1801|180a|180f)/.test(s.uuid) && !s.uuid.startsWith('11110001') && s.chars.some(c => c.props.notify) && s.chars.some(c => c.props.write || c.props.writeNR);
+    const svc = services.find(s => s.uuid.startsWith('0000fffa') && usable(s)) || services.find(usable);
     if (!svc) throw new Error('No battery data service found on this device.');
-    const chars = svc.chars;
-    const both = chars.find(c => c.props.notify && (c.props.write || c.props.writeNR));
-    const rx = both || chars.find(c => c.props.notify);
-    const tx = both || (proto === PROTO.pace ? [...chars].reverse() : chars).find(c => c.props.write || c.props.writeNR);
-    if (!rx || !tx) throw new Error('The battery service is missing its read or write channel.');
-    log(`Protocol ${proto.label}; service ${svc.uuid.slice(4, 8)}, notify ${rx.uuid.slice(4, 8)}, write ${tx.uuid.slice(4, 8)}`);
-    S.proto = proto; S.svc = svc.uuid; S.rx = rx; S.tx = tx; S.asm = new Reassembler(proto); S.lastLive = 0;
-    await BLE.notify(svc.uuid, rx.uuid, onBytes);
+    S.svc = svc.uuid;
+    // Listen on every notify channel in the service, in case replies come back on a different one.
+    for (const c of svc.chars.filter(c => c.props.notify)) {
+      try { await BLE.notify(svc.uuid, c.uuid, b => onBytes(b, c.uuid.slice(4, 8))); } catch (e) { log('Notify ' + c.uuid.slice(4, 8) + ' failed: ' + (e.message || e)); }
+    }
+    const both = svc.chars.filter(c => c.props.notify && (c.props.write || c.props.writeNR));
+    const writers = [...both, ...svc.chars.filter(c => !both.includes(c) && (c.props.write || c.props.writeNR))];
+    // SMB Link picks the format by name length: 15 characters = Shanmu (A5 A5 prefix), otherwise Pace (plain Modbus).
+    const nlen = (S.devName || '').replace(/\s/g, '').length;
+    const guess = nlen === 15 ? PROTO.shanmu : nlen === 16 ? PROTO.pace : svc.uuid.startsWith('0000fffa') ? PROTO.shanmu : PROTO.pace;
+    const order = [guess, guess === PROTO.shanmu ? PROTO.pace : PROTO.shanmu];
+    log(`Name length ${nlen}; trying ${order.map(p => p.label).join(' then ')} on ${writers.map(c => c.uuid.slice(4, 8)).join(', ')}`);
+    setPill('busy', 'Finding protocol…');
+    S.detectAsm = { shanmu: new Reassembler(PROTO.shanmu), pace: new Reassembler(PROTO.pace) };
+    S.detecting = true;
+    outer: for (let round = 0; round < 2; round++) {
+      for (const tx of writers.slice(0, 3)) {
+        for (const p of order) {
+          if (!S.active) throw new Error('The battery disconnected.');
+          S.tx = tx; S.tryProto = p;
+          await write(request(p, 'live'), 'probe ' + p.label);
+          for (let t = 0; t < 25 && S.detecting; t++) await sleep(100);
+          if (!S.detecting) break outer;
+        }
+      }
+    }
+    if (S.detecting) {
+      S.detecting = false;
+      setPill('err', 'No reply');
+      showError('Connected, but the battery did not answer in either format. Open Diagnostics, tap Copy log, and send it to Claude.');
+      return;
+    }
+    log(`Locked: ${S.proto.label} via write ${S.tx.uuid.slice(4, 8)}`);
     S.reconnectTry = 0;
-    setPill('busy', 'Reading…');
     $('#btnConnect').hidden = true; $('#btnDisconnect').hidden = false; $('#btnRereadSettings').disabled = false;
     startPolling(true);
   } catch (e) {
@@ -637,7 +660,7 @@ function write(bytes, label) {
   wq = wq.then(async () => {
     if (!S.tx || !S.active) return;
     await BLE.write(S.svc, S.tx.uuid, bytes, !!S.tx.props.write);
-    if (label !== 'live') log('→ ' + hex(bytes) + '  (' + label + ')');
+    if (label !== 'live' || S.detecting) log('→ ' + hex(bytes) + '  (' + label + ')');
   }).catch(e => log('Write failed: ' + (e.message || e)));
   return wq;
 }
@@ -658,15 +681,27 @@ function startPolling(full) {
 }
 function stopPolling() { if (S.pollTimer) clearTimeout(S.pollTimer); S.pollTimer = null; }
 
-function onBytes(bytes) {
-  if (!S.asm) return;
-  if (!S.lastLive && S.rawSeen++ < 6) log('← raw ' + hex(bytes));
-  for (const f of S.asm.feed(bytes)) {
-    if (f.error !== undefined) { log('BMS returned Modbus error ' + f.error); continue; }
-    S.frames++; if (!f.crc) S.crcFails++;
-    if (f.kind !== 'live') log(`← ${f.kind} block, ${f.regs.length} registers${f.crc ? '' : ' (CRC mismatch, accepted)'}`);
-    handleFrame(f);
+function onBytes(bytes, from) {
+  if (S.rawSeen < 16) { S.rawSeen++; log('← raw ' + (from || '') + '  ' + hex(bytes)); }
+  if (S.detecting) {
+    for (const [name, asm] of Object.entries(S.detectAsm)) {
+      const frames = asm.feed(bytes);
+      if (frames.some(f => f.error !== undefined)) log(`${PROTO[name].label} framing got a Modbus error reply`);
+      if (frames.some(f => f.kind === 'live')) {
+        S.proto = PROTO[name]; S.asm = asm; S.detecting = false;
+        frames.forEach(processFrame);
+        return;
+      }
+    }
+    return;
   }
+  if (S.asm) S.asm.feed(bytes).forEach(processFrame);
+}
+function processFrame(f) {
+  if (f.error !== undefined) { log('BMS returned Modbus error ' + f.error); return; }
+  S.frames++; if (!f.crc) S.crcFails++;
+  if (f.kind !== 'live') log(`← ${f.kind} block, ${f.regs.length} registers${f.crc ? '' : ' (CRC mismatch, accepted)'}`);
+  handleFrame(f);
 }
 
 /* ================= history ================= */
