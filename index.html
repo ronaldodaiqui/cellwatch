@@ -520,7 +520,7 @@ const NativeBle = {
   async notify(svc, ch, cb) { await BleClient.startNotifications(this.id, svc, ch, dv => cb(u8(dv))); },
   async write(svc, ch, bytes, withResp) {
     const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (withResp) await BleClient.write(this.id, svc, ch, dv); else await BleClient.writeWithoutResponse(this.id, svc, ch, dv);
+    if (withResp) await BleClient.write(this.id, svc, ch, dv, { timeout: 2000 }); else await BleClient.writeWithoutResponse(this.id, svc, ch, dv, { timeout: 2000 });
   },
   async disconnect() { try { await BleClient.disconnect(this.id); } catch (e) {} },
 };
@@ -583,7 +583,7 @@ async function connect() {
   setPill('busy', S.reconnectTry ? 'Reconnecting…' : 'Connecting…');
   setBanner(null);
   try {
-    S.active = false; S.proto = null; S.asm = null; S.detecting = false; S.rawSeen = 0; S.lastLive = 0;
+    S.active = false; S.proto = null; S.asm = null; S.detecting = false; S.rawSeen = 0; S.lastLive = 0; S.tries = 0;
     await BLE.connect(onDrop);
     S.active = true;
     const services = await BLE.services();
@@ -603,6 +603,7 @@ async function connect() {
     const guess = nlen === 15 ? PROTO.shanmu : nlen === 16 ? PROTO.pace : svc.uuid.startsWith('0000fffa') ? PROTO.shanmu : PROTO.pace;
     const order = [guess, guess === PROTO.shanmu ? PROTO.pace : PROTO.shanmu];
     log(`Name length ${nlen}; trying ${order.map(p => p.label).join(' then ')} on ${writers.map(c => c.uuid.slice(4, 8)).join(', ')}`);
+    await sleep(800);
     setPill('busy', 'Finding protocol…');
     S.detectAsm = { shanmu: new Reassembler(PROTO.shanmu), pace: new Reassembler(PROTO.pace) };
     S.detecting = true;
@@ -610,7 +611,8 @@ async function connect() {
       for (const tx of writers.slice(0, 3)) {
         for (const p of order) {
           if (!S.active) throw new Error('The battery disconnected.');
-          S.tx = tx; S.tryProto = p;
+          S.tx = tx; S.tryProto = p; S.tries = (S.tries || 0) + 1;
+          setPill('busy', `Finding protocol (${S.tries})…`);
           await write(request(p, 'live'), 'probe ' + p.label);
           for (let t = 0; t < 25 && S.detecting; t++) await sleep(100);
           if (!S.detecting) break outer;
@@ -659,7 +661,8 @@ let wq = Promise.resolve();
 function write(bytes, label) {
   wq = wq.then(async () => {
     if (!S.tx || !S.active) return;
-    await BLE.write(S.svc, S.tx.uuid, bytes, !!S.tx.props.write);
+    // Match SMB Link: Android's default write type is "without response" whenever the characteristic supports it.
+    await BLE.write(S.svc, S.tx.uuid, bytes, !S.tx.props.writeNR);
     if (label !== 'live' || S.detecting) log('→ ' + hex(bytes) + '  (' + label + ')');
   }).catch(e => log('Write failed: ' + (e.message || e)));
   return wq;
