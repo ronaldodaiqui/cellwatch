@@ -229,7 +229,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
       <div class="card-h">
         <h2 id="hHist">History</h2>
         <div class="seg" role="group" aria-label="Series" id="segSeries">
-          <button data-k="w" aria-pressed="true">Power</button><button data-k="soc" aria-pressed="false">SOC</button><button data-k="v" aria-pressed="false">Volts</button>
+          <button data-k="w" aria-pressed="true">Watts</button><button data-k="a" aria-pressed="false">Amps</button><button data-k="soc" aria-pressed="false">SOC</button><button data-k="v" aria-pressed="false">Volts</button>
         </div>
       </div>
       <div class="chartbox"><canvas id="chart" aria-label="History chart" role="img"></canvas></div>
@@ -859,7 +859,8 @@ function drawChart() {
   const src = histSource().filter(p => p[0] >= t0);
   const long = S.win > FINE_KEEP, gap = long ? 5 * 60000 : 60000;
   const key = S.series;
-  const val = p => key === 'w' ? p[1] * p[2] : key === 'soc' ? p[3] : p[1];
+  const signed = key === 'w' || key === 'a';
+  const val = p => key === 'w' ? p[1] * p[2] : key === 'a' ? p[2] : key === 'soc' ? p[3] : p[1];
   g.font = '11px ' + css.getPropertyValue('--mono'); g.textBaseline = 'middle';
   const padL = 46, padR = 8, padT = 10, padB = 22, pw = W - padL - padR, ph = H - padT - padB;
   if (src.length < 2) {
@@ -869,33 +870,34 @@ function drawChart() {
   const vs = src.map(val);
   let lo = Math.min(...vs), hi = Math.max(...vs);
   if (key === 'soc') { lo = 0; hi = 100; }
-  else if (key === 'w') { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
-  if (hi - lo < (key === 'v' ? 0.2 : 10)) { const m = (hi + lo) / 2, h = key === 'v' ? 0.1 : 5; lo = key === 'w' ? Math.min(lo, m - h) : m - h; hi = Math.max(hi, m + h); }
+  else if (signed) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+  const minSpan = key === 'v' ? 0.2 : key === 'a' ? 2 : 10;
+  if (hi - lo < minSpan) { const m = (hi + lo) / 2, h = minSpan / 2; lo = signed ? Math.min(lo, m - h) : m - h; hi = Math.max(hi, m + h); }
   const step = niceStep((hi - lo) / 4); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
   const X = t => padL + (t - t0) / S.win * pw, Y = v => padT + (1 - (v - lo) / (hi - lo)) * ph;
   g.strokeStyle = col('--line'); g.lineWidth = 1; g.fillStyle = col('--muted'); g.textAlign = 'right';
-  const dec = key === 'v' && step < 1 ? (step < 0.1 ? 2 : 1) : 0;
+  const dec = (key === 'v' || key === 'a') && step < 1 ? (step < 0.1 ? 2 : 1) : 0;
   for (let v = lo; v <= hi + step / 2; v += step) {
     const y = Math.round(Y(v)) + .5; g.beginPath(); g.moveTo(padL, y); g.lineTo(W - padR, y); g.stroke();
     g.fillText(v.toFixed(dec) + (key === 'soc' ? '%' : key === 'w' ? '' : ''), padL - 6, y);
   }
   g.textAlign = 'center';
   [0, .5, 1].forEach(f => { const t = t0 + f * S.win; g.textAlign = f === 0 ? 'left' : f === 1 ? 'right' : 'center'; g.fillText(f === 1 ? 'now' : long ? new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' }) : new Date(t).toTimeString().slice(0, 5), padL + f * pw, H - 8); });
-  g.textAlign = 'left'; g.fillText(key === 'w' ? 'W' : key === 'v' ? 'V' : '', 4, padT);
-  const base = key === 'w' ? Y(0) : padT + ph;
+  g.textAlign = 'left'; g.fillText(key === 'w' ? 'W' : key === 'a' ? 'A' : key === 'v' ? 'V' : '', 4, padT);
+  const base = signed ? Y(0) : padT + ph;
   const segs = []; let cur = [];
   src.forEach((p, i) => { if (i && p[0] - src[i - 1][0] > gap) { segs.push(cur); cur = []; } cur.push(p); }); segs.push(cur);
   const fillPath = s => { g.beginPath(); g.moveTo(X(s[0][0]), base); s.forEach(p => g.lineTo(X(p[0]), Y(val(p)))); g.lineTo(X(s[s.length - 1][0]), base); g.closePath(); };
   for (const s of segs) {
     if (s.length < 2) continue;
-    if (key === 'w') {
+    if (signed) {
       g.save(); g.beginPath(); g.rect(padL, padT, pw, base - padT); g.clip(); fillPath(s); g.fillStyle = col('--good-soft'); g.fill(); g.restore();
       g.save(); g.beginPath(); g.rect(padL, base, pw, padT + ph - base); g.clip(); fillPath(s); g.fillStyle = col('--accent-soft'); g.fill(); g.restore();
     } else { fillPath(s); g.fillStyle = col('--accent-soft'); g.fill(); }
     g.beginPath(); s.forEach((p, i) => (i ? g.lineTo : g.moveTo).call(g, X(p[0]), Y(val(p))));
     g.strokeStyle = col('--accent'); g.lineWidth = 1.75; g.lineJoin = 'round'; g.stroke();
   }
-  if (key === 'w') { g.strokeStyle = col('--muted'); g.lineWidth = 1; g.beginPath(); g.moveTo(padL, Math.round(base) + .5); g.lineTo(W - padR, Math.round(base) + .5); g.stroke(); }
+  if (signed) { g.strokeStyle = col('--muted'); g.lineWidth = 1; g.beginPath(); g.moveTo(padL, Math.round(base) + .5); g.lineTo(W - padR, Math.round(base) + .5); g.stroke(); }
   const lp = src[src.length - 1]; g.fillStyle = col('--accent'); g.beginPath(); g.arc(X(lp[0]), Y(val(lp)), 3.5, 0, 7); g.fill();
 }
 function niceStep(raw) { const p = 10 ** Math.floor(Math.log10(raw || 1)), n = raw / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p; }
