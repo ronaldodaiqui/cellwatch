@@ -315,7 +315,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
           <div class="temps" id="temps"></div>
         </section>
         <section class="card" aria-labelledby="hInfo">
-          <div class="card-h"><h2 id="hInfo">Battery info</h2></div>
+          <div class="card-h"><h2 id="hInfo">Battery info</h2><button class="small snapbtn">Save full snapshot</button></div>
           <dl class="kv" id="info"></dl>
         </section>
       </div>
@@ -349,6 +349,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
   <main id="view-diagnose" class="view" hidden>
     <section class="card" aria-labelledby="hChg">
       <div class="card-h"><h2 id="hChg">Charging diagnostics</h2><span class="chip" id="dVerdict">Not connected</span></div>
+      <div class="actions"><button class="primary small snapbtn">Save full snapshot</button><span class="note">A text file with every reading, setting, event and raw register right now.</span></div>
       <div class="tbl"><table class="dtable"><thead><tr><th>Reading</th><th>Now</th></tr></thead><tbody id="dRows"><tr><td colspan="2" class="muted">Connect the battery to see live diagnostics.</td></tr></tbody></table></div>
       <p class="note">"Unknown" means the battery's protocol doesn't report it. Values from SMB Link's own decoding are marked <b>vendor</b>; values from Pace's published register map that SMB Link doesn't use are marked <b>Pace map</b>.</p>
     </section>
@@ -857,6 +858,7 @@ function handleFrame(f) {
   } else if (f.kind === 'info') {
     if (shanmu) { S.info.firmware = ascii(f.bytes.slice(0, 30)); S.info.model = ascii(f.bytes.slice(30, 60)); S.info.packSn = ascii(f.bytes.slice(60, 90)); }
     else { S.info.firmware = ascii(f.bytes.slice(0, 20)); S.info.model = ascii(f.bytes.slice(20, 40)); }
+    S.infoRegs = f.regs;
     S.info.raw = ascii(f.bytes.map(b => (b >= 32 && b < 127) ? b : 46)).replace(/\.{2,}/g, ' … ');
     renderInfo();
   } else if (f.kind === 'proto') {
@@ -1263,14 +1265,14 @@ async function updateLogInfo() {
   $('#dlogInfo').textContent = `Every reading (about every 2 seconds) is saved with the battery's full raw reply and kept for 3 days. ${n.toLocaleString()} reading${n === 1 ? '' : 's'} stored on this phone.`;
 }
 
-async function saveFile(name, text) {
+async function saveFile(name, text, mime = 'text/csv') {
   if (NATIVE && window.Native) {
     const { Filesystem, Directory, Encoding, Share } = window.Native;
     const res = await Filesystem.writeFile({ path: name, data: text, directory: Directory.Cache, encoding: Encoding.UTF8 });
     try { await Share.share({ title: name, dialogTitle: 'Save or send ' + name, files: [res.uri] }); } catch (e) { if (!/cancel/i.test(e.message || '')) throw e; }
     return;
   }
-  const blob = new Blob([text], { type: 'text/csv' });
+  const blob = new Blob([text], { type: mime });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
@@ -1390,6 +1392,99 @@ async function exportCells() {
   catch (e) { $('#cellNote').textContent = 'Export failed: ' + (e.message || e); }
 }
 
+/* ================= snapshot ================= */
+// Plain-text dump of everything Ferro knows right now, for comparing the battery across days.
+const plain = html => String(html).replace(/<br\s*\/?>/g, '; ').replace(/<span class="src[^"]*">/g, ' — ').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
+const regDump = (regs, base) => {
+  const lines = [];
+  for (let i = 0; i < regs.length; i += 8) {
+    const a = base + i;
+    lines.push(`  ${String(a).padStart(3)} (0x${a.toString(16).toUpperCase().padStart(4, '0')})  ` + regs.slice(i, i + 8).map(v => v.toString(16).toUpperCase().padStart(4, '0')).join(' '));
+  }
+  return lines.join('\n');
+};
+
+function snapshotText() {
+  const d = S.live, now = new Date(), L = [], pad = (k, w = 22) => (k + ':').padEnd(w);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  L.push('FERRO BATTERY SNAPSHOT');
+  L.push(`Taken:        ${now.toLocaleString('sv-SE')} ${tz}  (${now.toISOString()})`);
+  if (S.demo || !d || !d.src) { L.push('', 'No battery connected. Connect the battery and save again.'); return L.join('\n'); }
+  const age = S.lastLive ? Math.round((Date.now() - S.lastLive) / 1000) : null;
+  L.push(`Battery:      ${S.devName || '--'}`);
+  L.push(`BMS:          ${S.proto.label} protocol · firmware ${S.info.firmware || '--'} · model SN ${S.info.model || '--'}`);
+  L.push(`Connection:   ${S.active ? 'connected' : 'NOT connected'}; last reading ${age === null ? '--' : age + ' s ago'}; ${S.frames} replies received${S.crcFails ? `, ${S.crcFails} with CRC mismatch` : ''}`);
+
+  const ext = cellExt(d.cells);
+  L.push('', '== Summary ==');
+  L.push(pad('State of charge') + `${d.soc} %`);
+  if (d.remainAh !== undefined) L.push(pad('Capacity') + `${d.remainAh.toFixed(2)} Ah left of ${d.fullAh.toFixed(2)} Ah full${d.designAh ? ` (design ${d.designAh.toFixed(2)} Ah)` : ''}${d.soh ? `, health ${d.soh} %` : ''}`);
+  L.push(pad('Pack voltage') + `${d.v.toFixed(2)} V`);
+  L.push(pad('Current') + `${d.a > 0 ? '+' : ''}${d.a.toFixed(2)} A (${Math.abs(d.a) < 0.1 ? 'idle' : d.a > 0 ? 'charging' : 'discharging'}; + = into battery${$('#flipSign').checked ? ', sign flipped in Setup' : ', convention not yet confirmed'})`);
+  L.push(pad('Power') + `${Math.round(d.w)} W`);
+  L.push(pad('Cycles') + d.cycles);
+
+  L.push('', '== Cells ==');
+  d.cells.forEach((c, i) => L.push(`  C${i + 1}   ${c.toFixed(3)} V${ext && i === ext.mx ? '   highest' : ''}${ext && i === ext.mn ? '   lowest' : ''}`));
+  if (ext) {
+    const sum = d.cells.reduce((x, y) => x + y, 0);
+    L.push(`  Difference ${ext.diff} mV (C${ext.mx + 1} − C${ext.mn + 1}) · average ${(sum / d.cells.length).toFixed(3)} V · sum ${sum.toFixed(3)} V`);
+  }
+
+  L.push('', '== Temperatures ==');
+  d.temps.forEach((t, i) => L.push(`  Sensor ${i + 1}   ${degF(t)} °F (${t.toFixed(1)} °C)`));
+  if (d.mos !== null) L.push(`  MOSFET     ${degF(d.mos)} °F (${d.mos.toFixed(1)} °C)`);
+
+  const s = d.src, b = s.bits, onoff = v => v ? 'ON' : 'OFF';
+  L.push('', '== Switches and status ==');
+  L.push(pad('Charge MOSFET') + `${onoff(d.chg)}   (reg ${s.status} bit ${b.chg}, vendor)`);
+  L.push(pad('Discharge MOSFET') + `${onoff(d.dsg)}   (reg ${s.status} bit ${b.dsg}, vendor)`);
+  L.push(pad('Charger input (Acin)') + `${onoff(d.acin)}   (reg ${s.status} bit ${b.acin}; SMB Link label, meaning undocumented)`);
+  L.push(pad('Heater') + `${onoff(d.heat)}   (reg ${s.status} bit ${b.heat}, vendor)`);
+  for (const [i, n] of Object.entries(b.spec || {})) L.push(pad(n) + `${bit(d.status, +i) ? 'yes' : 'no'}   (reg ${s.status} bit ${i}, Pace spec only)`);
+  const ul = unlabelledBits(d.status, b);
+  L.push(pad('Undocumented bits') + (ul.length ? ul.join(', ') : 'none set'));
+
+  L.push('', '== Alarms, protections, faults ==');
+  const al = names(d.warn, WARN), pr = names(d.prot, PROT), fa = faults(d.status);
+  const wx = [6, 7].filter(i => bit(d.warn, i)), px = bit(d.prot, 15);
+  L.push(`  Alarms       reg ${s.warn} = ${hex4(d.warn)}  ${al.join(', ') || 'none'}${wx.length ? `; undocumented bits ${wx.join(', ')} set` : ''}`);
+  L.push(`  Protections  reg ${s.prot} = ${hex4(d.prot)}  ${pr.join(', ') || 'none'}${px ? '; undocumented bit 15 set (reserved in Pace spec, ignored by SMB Link)' : ''}`);
+  L.push(`  Faults       reg ${s.status} bits 0–5  ${fa.join(', ') || 'none'}`);
+
+  L.push('', '== Balancing ==');
+  const bi = balanceInfo(d);
+  L.push(pad('Thresholds') + plain(bi.thr));
+  L.push(pad('Conditions (calc.)') + plain(bi.cond));
+  L.push(pad('Balance status reg') + (d.balance === null || d.balance === undefined ? 'not available for this BMS type' : `${hex4(d.balance)}  (${bin16(d.balance)}) — named "Balance status" in Pace spec; bit meaning unverified`));
+  L.push(pad('Balancing active') + plain(bi.active));
+  L.push(pad('Cells balancing') + plain(bi.cells));
+  L.push(pad('Enabled / current') + 'not reported by the protocol');
+
+  L.push('', '== BMS protection settings ==');
+  const groups = settingsGroups(true);
+  if (!groups.length) L.push('  (not read yet)');
+  for (const [g, rows] of groups) { L.push(`  ${g}`); for (const [l, t] of rows) L.push(`    ${(l + ':').padEnd(40)}${t}`); }
+
+  L.push('', '== Recent events ==');
+  if (!S.events.length) L.push('  none recorded');
+  for (const ev of S.events.slice(0, 25)) L.push(`  ${new Date(ev.t).toLocaleString('sv-SE')}  ${ev.items.map(i => i[1]).join('; ')}`);
+
+  L.push('', '== Raw registers (hex, 8 per line, starting register shown) ==');
+  if (d.raw) L.push(`Live block from 0x${S.proto.blocks.live[0].toString(16).padStart(4, '0')}:`, regDump(d.raw, S.proto.blocks.live[0]));
+  if (S.settings) L.push(`Settings block from 0x${S.proto.blocks.settings[0].toString(16).padStart(4, '0')}:`, regDump(S.settings, S.proto.blocks.settings[0]));
+  if (S.infoRegs) L.push(`Info block from 0x${S.proto.blocks.info[0].toString(16).padStart(4, '0')}:`, regDump(S.infoRegs, S.proto.blocks.info[0]), `  as text: ${S.info.raw || ''}`);
+  return L.join('\n') + '\n';
+}
+
+async function saveSnapshot(btn) {
+  const text = snapshotText(), name = 'ferro-snapshot-' + new Date().toLocaleString('sv-SE').replace(/[: ]/g, '-').slice(0, 16) + '.txt';
+  const old = btn.textContent;
+  try { await saveFile(name, text, 'text/plain'); btn.textContent = 'Saved'; }
+  catch (e) { btn.textContent = 'Save failed'; log('Snapshot failed: ' + (e.message || e)); }
+  setTimeout(() => { btn.textContent = old; }, 2000);
+}
+
 /* ================= render ================= */
 const fmtH = h => !isFinite(h) || h <= 0 ? null : h >= 48 ? (h / 24).toFixed(1) + ' days' : h >= 1 ? h.toFixed(1) + ' h' : Math.round(h * 60) + ' min';
 function render() {
@@ -1460,41 +1555,40 @@ function render() {
 }
 
 const fmtNum = (x, scale) => x.toFixed(scale >= 1 ? 0 : scale >= 0.1 ? 1 : scale >= 0.01 ? 2 : 3);
-function renderPaceSettings() {
-  const r = S.settings, host = $('#thresholds'), flags = S.live && S.live.raw ? S.live.raw[8] : 0;
-  host.textContent = '';
-  for (const [group, rows] of PACE_SETTINGS) {
-    const wrap = document.createElement('div'); wrap.className = 'tbl';
-    let html = `<table><thead><tr><th>${group}</th><th style="text-align:right">Value</th></tr></thead><tbody>`;
-    for (const [label, i, type, arg, unit] of rows) {
+// One formatter for the BMS settings, shared by the screen and the snapshot file. Temperatures carry °C too when asked.
+function settingsGroups(withC) {
+  const r = S.settings; if (!r) return [];
+  const tf = c => degF(c) + ' °F' + (withC ? ` (${c.toFixed(1)} °C)` : '');
+  const out = [];
+  if (S.proto === PROTO.pace && !S.demo) {
+    const flags = S.live && S.live.raw ? S.live.raw[8] : 0;
+    for (const [group, rows] of PACE_SETTINGS) out.push([group, rows.map(([label, i, type, arg, unit]) => {
       const v = r[i]; let txt = '--';
       if (v !== undefined) {
         if (type === 'pv') txt = (v / (bit(flags, arg) ? 1000 : 100)).toFixed(2) + ' V';
-        else if (type === 'c') txt = degF(i16(v) / 10) + ' °F';
+        else if (type === 'c') txt = tf(i16(v) / 10);
         else if (type === 's') txt = fmtNum(i16(v) * arg, arg) + ' ' + unit;
         else txt = fmtNum(v * arg, arg) + ' ' + unit;
       }
-      html += `<tr><td>${label}</td><td class="num">${txt}</td></tr>`;
-    }
-    wrap.innerHTML = html + '</tbody></table>';
-    host.append(wrap);
+      return [label, txt];
+    })]);
+    return out;
   }
+  const at = a => r[a - 0x3c];
+  for (const [group, rows] of SETTINGS) out.push([group, rows.map(([label, addr, type, scale, unit]) => {
+    let v, txt;
+    if (type === 'k') { v = at(addr); txt = v === undefined ? '--' : tf(tK(v)); }
+    else { v = type === 'u32' ? at(addr) * 65536 + at(addr + 1) : at(addr); const x = v * scale; txt = v === undefined || isNaN(x) ? '--' : x.toFixed(scale >= 1 ? 0 : scale >= 0.1 ? 1 : scale >= 0.01 ? 3 : unit === 'V' || unit === 'A' ? 3 : 2) + ' ' + unit; }
+    return [label, txt];
+  })]);
+  return out;
 }
 function renderSettings() {
-  if (S.settings && S.proto === PROTO.pace && !S.demo) return renderPaceSettings();
-  const r = S.settings, host = $('#thresholds'); if (!r) return;
-  const at = a => r[a - 0x3c];
+  const host = $('#thresholds'), groups = settingsGroups(false); if (!groups.length) return;
   host.textContent = '';
-  for (const [group, rows] of SETTINGS) {
+  for (const [group, rows] of groups) {
     const wrap = document.createElement('div'); wrap.className = 'tbl';
-    let html = `<table><thead><tr><th>${group}</th><th style="text-align:right">Value</th></tr></thead><tbody>`;
-    for (const [label, addr, type, scale, unit] of rows) {
-      let v, txt;
-      if (type === 'k') { v = at(addr); txt = v === undefined ? '--' : degF(tK(v)) + ' °F'; }
-      else { v = type === 'u32' ? at(addr) * 65536 + at(addr + 1) : at(addr); const x = v * scale; txt = v === undefined || isNaN(x) ? '--' : x.toFixed(scale >= 1 ? 0 : scale >= 0.1 ? 1 : scale >= 0.01 ? 3 : unit === 'V' || unit === 'A' ? 3 : 2) + ' ' + unit; }
-      html += `<tr><td>${label}</td><td class="num">${txt}</td></tr>`;
-    }
-    wrap.innerHTML = html + '</tbody></table>';
+    wrap.innerHTML = `<table><thead><tr><th>${group}</th><th style="text-align:right">Value</th></tr></thead><tbody>` + rows.map(([l, t]) => `<tr><td>${l}</td><td class="num">${t}</td></tr>`).join('') + '</tbody></table>';
     host.append(wrap);
   }
 }
@@ -1607,6 +1701,7 @@ async function init() {
   document.querySelectorAll('#segCellWin button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.w === S.cellWin));
   $('#segCellWin').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.cellWin = +b.dataset.w; store.set('cellwin', S.cellWin); document.querySelectorAll('#segCellWin button').forEach(x => x.setAttribute('aria-pressed', x === b)); drawCells(); };
   $('#btnCellCsv').onclick = exportCells;
+  document.querySelectorAll('.snapbtn').forEach(b => b.onclick = () => saveSnapshot(b));
   $('#btnCsv').onclick = () => exportCsv().catch(e => log('Export failed: ' + e.message));
   document.querySelectorAll('[data-span]').forEach(b => b.onclick = () => exportDiag(+b.dataset.span));
   $('#btnClearHist').onclick = e => {
