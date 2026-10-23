@@ -172,6 +172,16 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
 .devrow .dn{font-weight:600;grid-column:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .devrow .di{grid-column:1;font-size:12px;color:var(--muted)}
 .devrow .dr{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:12.5px;color:var(--muted)}
+/* pages + bottom tabs */
+.wrap{padding-bottom:calc(88px + env(safe-area-inset-bottom,0px))!important}
+.view{display:grid;gap:14px;min-width:0}
+.view>.cols{margin:0}
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:15;display:grid;grid-template-columns:repeat(3,1fr);background:var(--surface);border-top:1px solid var(--line);
+  padding-bottom:env(safe-area-inset-bottom,0px);padding-left:max(0px,env(safe-area-inset-left,0px));padding-right:max(0px,env(safe-area-inset-right,0px))}
+.tabs button{border:0;border-radius:0;background:none;display:grid;justify-items:center;gap:2px;padding:9px 4px 10px;font-size:12.5px;font-weight:600;color:var(--muted);letter-spacing:.03em}
+.tabs svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.tabs button[aria-current=page]{color:var(--accent)}
+#view-history .chartbox{height:min(52vh,420px)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -194,28 +204,49 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
     <span id="bannerText">Showing demo data. Close SMB Link on your phone, then connect your battery to see real readings.</span>
   </div>
 
-  <section class="card" aria-label="Battery overview">
-    <div class="hero">
-      <div class="soc">
-        <div class="soc-num"><span id="soc">--</span><small>%</small></div>
-        <div class="cellbar" aria-hidden="true"><i id="socFill"></i></div>
-        <p class="state" id="stateLine">--</p>
-        <p class="sub" id="capLine"></p>
+  <main id="view-battery" class="view">
+    <section class="card" aria-label="Battery overview">
+      <div class="hero">
+        <div class="soc">
+          <div class="soc-num"><span id="soc">--</span><small>%</small></div>
+          <div class="cellbar" aria-hidden="true"><i id="socFill"></i></div>
+          <p class="state" id="stateLine">--</p>
+          <p class="sub" id="capLine"></p>
+        </div>
+        <dl class="figs">
+          <div><dt>Voltage</dt><dd id="fV">--</dd></div>
+          <div><dt>Current</dt><dd id="fA">--</dd></div>
+          <div><dt>Power</dt><dd id="fW">--</dd></div>
+          <div><dt>Cell spread</dt><dd id="fSpread">--</dd></div>
+          <div><dt>Battery temp</dt><dd id="fTemp">--</dd></div>
+          <div><dt>MOSFET temp</dt><dd id="fMos">--</dd></div>
+        </dl>
       </div>
-      <dl class="figs">
-        <div><dt>Voltage</dt><dd id="fV">--</dd></div>
-        <div><dt>Current</dt><dd id="fA">--</dd></div>
-        <div><dt>Power</dt><dd id="fW">--</dd></div>
-        <div><dt>Cell spread</dt><dd id="fSpread">--</dd></div>
-        <div><dt>Avg cell</dt><dd id="fAvg">--</dd></div>
-        <div><dt>Cycles</dt><dd id="fCyc">--</dd></div>
-      </dl>
-    </div>
-    <div class="chips" id="chips"></div>
-  </section>
+      <div class="chips" id="chips"></div>
+    </section>
+  </main>
 
-  <div class="cols">
-    <div class="stack">
+  <main id="view-history" class="view" hidden>
+    <section class="card" aria-labelledby="hHist">
+      <div class="card-h">
+        <h2 id="hHist">History</h2>
+        <div class="seg" role="group" aria-label="Series" id="segSeries">
+          <button data-k="w" aria-pressed="true">Power</button><button data-k="soc" aria-pressed="false">SOC</button><button data-k="v" aria-pressed="false">Volts</button>
+        </div>
+      </div>
+      <div class="chartbox"><canvas id="chart" aria-label="History chart" role="img"></canvas></div>
+      <div class="card-h">
+        <div class="seg" role="group" aria-label="Time window" id="segWin">
+          <button data-w="900000" aria-pressed="false">15 m</button><button data-w="3600000" aria-pressed="true">1 h</button><button data-w="21600000" aria-pressed="false">6 h</button><button data-w="86400000" aria-pressed="false">24 h</button>
+        </div>
+        <div class="actions"><button class="small" id="btnCsv">Export CSV</button><button class="small" id="btnClearHist">Clear</button></div>
+      </div>
+      <p class="note" id="histNote">History keeps the last 24 hours on this device while the app is open and connected.</p>
+    </section>
+  </main>
+
+  <main id="view-details" class="view" hidden>
+    <div class="cols">
       <section class="card" aria-labelledby="hCells">
         <div class="card-h"><h2 id="hCells">Cells</h2><span class="chip" id="spreadChip">--</span></div>
         <div class="cells" id="cells"></div>
@@ -223,69 +254,57 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
         <div class="cellsum" id="cellSum"></div>
       </section>
 
-      <section class="card" aria-labelledby="hTemps">
-        <div class="card-h"><h2 id="hTemps">Temperatures</h2></div>
-        <div class="temps" id="temps"></div>
-      </section>
+      <div class="stack">
+        <section class="card" aria-labelledby="hTemps">
+          <div class="card-h"><h2 id="hTemps">Temperatures</h2></div>
+          <div class="temps" id="temps"></div>
+        </section>
+        <section class="card" aria-labelledby="hInfo">
+          <div class="card-h"><h2 id="hInfo">Battery info</h2></div>
+          <dl class="kv" id="info"></dl>
+        </section>
+      </div>
     </div>
 
-    <div class="stack">
-      <section class="card" aria-labelledby="hHist">
-        <div class="card-h">
-          <h2 id="hHist">History</h2>
-          <div class="seg" role="group" aria-label="Series" id="segSeries">
-            <button data-k="w" aria-pressed="true">Power</button><button data-k="soc" aria-pressed="false">SOC</button><button data-k="v" aria-pressed="false">Volts</button>
-          </div>
+    <section class="card" aria-labelledby="hSetup">
+      <div class="card-h"><h2 id="hSetup">Setup</h2></div>
+      <div class="fields">
+        <div class="field">
+          <label for="ratedAh">Rated capacity (Ah)</label>
+          <input type="number" id="ratedAh" min="1" max="2000" step="1" placeholder="e.g. 100">
         </div>
-        <div class="chartbox"><canvas id="chart" aria-label="History chart" role="img"></canvas></div>
-        <div class="card-h">
-          <div class="seg" role="group" aria-label="Time window" id="segWin">
-            <button data-w="900000" aria-pressed="false">15 m</button><button data-w="3600000" aria-pressed="true">1 h</button><button data-w="21600000" aria-pressed="false">6 h</button><button data-w="86400000" aria-pressed="false">24 h</button>
-          </div>
-          <div class="actions"><button class="small" id="btnCsv">Export CSV</button><button class="small" id="btnClearHist">Clear</button></div>
+        <div class="field">
+          <span>Options</span>
+          <label class="check" id="wakeRow"><input type="checkbox" id="wake"> Keep screen on</label>
+          <label class="check"><input type="checkbox" id="flipSign"> Current sign is reversed</label>
         </div>
-        <p class="note" id="histNote">History keeps the last 24 hours on this device while the page is open and connected.</p>
-      </section>
+      </div>
+      <p class="note">Rated capacity is only needed if your battery doesn't report its own amp-hours. Cellwatch then uses it with the state of charge to estimate time remaining.</p>
+    </section>
 
-      <section class="card" aria-labelledby="hSetup">
-        <div class="card-h"><h2 id="hSetup">Setup</h2></div>
-        <div class="fields">
-          <div class="field">
-            <label for="ratedAh">Rated capacity (Ah)</label>
-            <input type="number" id="ratedAh" min="1" max="2000" step="1" placeholder="e.g. 100">
-          </div>
-          <div class="field">
-            <span>Options</span>
-            <label class="check" id="wakeRow"><input type="checkbox" id="wake"> Keep screen on</label>
-            <label class="check"><input type="checkbox" id="flipSign"> Current sign is reversed</label>
-          </div>
-        </div>
-        <p class="note">Only needed if your battery doesn't report its own amp-hours. Cellwatch then uses this with the state of charge to estimate time remaining.</p>
-      </section>
-    </div>
-  </div>
+    <details class="card" id="thrBox">
+      <summary><h2>BMS protection settings</h2></summary>
+      <p class="note">Read-only copy of the limits stored in the BMS. Change them in SMB Link if you need to.</p>
+      <div id="thresholds"><p class="empty">Shown after connecting.</p></div>
+      <div><button class="small" id="btnRereadSettings" disabled>Read again</button></div>
+    </details>
 
-  <details class="card" id="thrBox">
-    <summary><h2>BMS protection settings</h2></summary>
-    <p class="note">Read-only copy of the limits stored in the BMS. Change them in SMB Link if you need to.</p>
-    <div id="thresholds"><p class="empty">Shown after connecting.</p></div>
-    <div><button class="small" id="btnRereadSettings" disabled>Read again</button></div>
-  </details>
-
-  <details class="card">
-    <summary><h2>Device info</h2></summary>
-    <dl class="kv" id="info"></dl>
-  </details>
-
-  <details class="card" id="diag">
-    <summary><h2>Diagnostics</h2></summary>
-    <p class="note">Registers SMB Link reads but never displays. If one of these looks like your battery's capacity or remaining amp-hours, tell Claude and it can be added to the main view.</p>
-    <div class="tbl"><table><thead><tr><th>Register</th><th style="text-align:right">Hex</th><th style="text-align:right">Decimal</th><th style="text-align:right">÷ 100</th></tr></thead><tbody id="rawRegs"></tbody></table></div>
-    <dl class="kv" id="diagKv"></dl>
-    <div class="card-h"><span class="note">Packet log</span><div class="actions"><button class="small" id="btnCopyLog">Copy log</button></div></div>
-    <pre class="log" id="log"></pre>
-  </details>
+    <details class="card" id="diag">
+      <summary><h2>Diagnostics</h2></summary>
+      <p class="note">Registers the battery sends that Cellwatch doesn't display yet.</p>
+      <div class="tbl"><table><thead><tr><th>Register</th><th style="text-align:right">Hex</th><th style="text-align:right">Decimal</th><th style="text-align:right">÷ 100</th></tr></thead><tbody id="rawRegs"></tbody></table></div>
+      <dl class="kv" id="diagKv"></dl>
+      <div class="card-h"><span class="note">Packet log</span><div class="actions"><button class="small" id="btnCopyLog">Copy log</button></div></div>
+      <pre class="log" id="log"></pre>
+    </details>
+  </main>
 </div>
+
+<nav class="tabs" aria-label="Pages">
+  <button data-view="battery" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="16" height="10" rx="2"/><path d="M21 10v4"/><path d="M7 10v4M10 10v4"/></svg>Battery</button>
+  <button data-view="history"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-6 4 3 5-7 4 4"/><path d="M3 21h18"/></svg>History</button>
+  <button data-view="details"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Details</button>
+</nav>
 
 <div class="sheet" id="scanSheet" hidden>
   <div class="sheet-panel" role="dialog" aria-labelledby="scanTitle">
@@ -408,11 +427,13 @@ function decodePace(r) {
   const rem = r[4] / 100, full = r[5] / 100;
   if (full > 0 && full < 5000 && rem <= full * 1.05) { d.remainAh = rem; d.fullAh = full; }
   if (r[3] > 0 && r[3] <= 100) d.soh = r[3];
+  if (r[6] > 0 && r[6] < 500000) d.designAh = r[6] / 100;
   return d;
 }
 const ascii = bytes => String.fromCharCode(...bytes.filter(b => b >= 32 && b < 127)).trim();
 
 const tK = v => (v - 2730) / 10;
+const degF = c => Math.round(c * 9 / 5 + 32);
 const SETTINGS = [
   ['Voltage', [
     ['Pack over-voltage alarm', 0x3c, 'u32', 0.001, 'V'], ['Pack over-voltage protection', 0x3e, 'u32', 0.001, 'V'], ['Pack over-voltage release', 0x40, 'u32', 0.001, 'V'], ['Pack over-voltage delay', 0x42, 'u16', 0.1, 's'],
@@ -847,13 +868,14 @@ function render() {
   $('#fA').classList.toggle('pos', d.a > 0.1);
   $('#fW').innerHTML = `${d.w > 0 ? '+' : ''}${Math.round(d.w)}<small>W</small>`;
   $('#fW').classList.toggle('pos', d.w > 1);
-  $('#fCyc').textContent = d.cycles;
+  const maxT = d.temps.length ? Math.max(...d.temps) : null;
+  $('#fTemp').innerHTML = maxT === null ? '--' : `${degF(maxT)}<small>°F</small>`;
+  $('#fMos').innerHTML = d.mos === null ? '--' : `${degF(d.mos)}<small>°F</small>`;
 
   const cells = d.cells, box = $('#cells');
   if (cells.length) {
     const mn = Math.min(...cells), mx = Math.max(...cells), spread = Math.round((mx - mn) * 1000), avg = cells.reduce((a, b) => a + b, 0) / cells.length;
     $('#fSpread').innerHTML = `${spread}<small>mV</small>`;
-    $('#fAvg').innerHTML = `${avg.toFixed(3)}<small>V</small>`;
     const sc = $('#spreadChip'); sc.textContent = spread + ' mV spread'; sc.className = 'chip ' + (spread < 20 ? 'good' : spread < 50 ? 'warn' : 'bad');
     box.textContent = '';
     const iMin = cells.indexOf(mn), iMax = cells.indexOf(mx);
@@ -864,14 +886,15 @@ function render() {
       row.innerHTML = `<span class="n">C${i + 1}</span><span class="t"><i style="width:${pct.toFixed(1)}%"></i></span><span class="v">${v.toFixed(3)}</span>`;
       box.append(row);
     });
-    $('#cellSum').innerHTML = `<span>Lowest <b>${mn.toFixed(3)}</b> (C${iMin + 1})</span><span>Highest <b>${mx.toFixed(3)}</b> (C${iMax + 1})</span><span>Sum <b>${cells.reduce((a, b) => a + b, 0).toFixed(2)}</b> V</span>`;
+    $('#cellSum').innerHTML = `<span>Lowest <b>${mn.toFixed(3)}</b> (C${iMin + 1})</span><span>Highest <b>${mx.toFixed(3)}</b> (C${iMax + 1})</span><span>Average <b>${avg.toFixed(3)}</b></span><span>Sum <b>${cells.reduce((a, b) => a + b, 0).toFixed(2)}</b> V</span>`;
   } else { box.innerHTML = '<p class="empty">No cell voltages reported.</p>'; }
 
   const tb = $('#temps'); tb.textContent = '';
-  const tcard = (label, t) => { const el = document.createElement('div'); el.className = 'temp' + (t >= 45 ? ' hot' : t <= 0 ? ' cold' : ''); el.innerHTML = `<span>${label}</span><b>${t.toFixed(1)}<small>°C</small></b>`; tb.append(el); };
+  const tcard = (label, t) => { const el = document.createElement('div'); el.className = 'temp' + (t >= 45 ? ' hot' : t <= 0 ? ' cold' : ''); el.innerHTML = `<span>${label}</span><b>${degF(t)}<small>°F</small></b>`; tb.append(el); };
   d.temps.forEach((t, i) => tcard('Sensor ' + (i + 1), t));
   if (d.mos !== null) tcard('MOSFET', d.mos);
   if (!tb.childElementCount) tb.innerHTML = '<p class="empty">No temperature sensors reported.</p>';
+  renderInfo();
 
   const ch = $('#chips'); ch.textContent = '';
   const chip = (t, c) => { const s = document.createElement('span'); s.className = 'chip ' + c; s.textContent = t; ch.append(s); };
@@ -905,7 +928,7 @@ function renderPaceSettings() {
       const v = r[i]; let txt = '--';
       if (v !== undefined) {
         if (type === 'pv') txt = (v / (bit(flags, arg) ? 1000 : 100)).toFixed(2) + ' V';
-        else if (type === 'c') txt = (i16(v) / 10).toFixed(1) + ' °C';
+        else if (type === 'c') txt = degF(i16(v) / 10) + ' °F';
         else if (type === 's') txt = fmtNum(i16(v) * arg, arg) + ' ' + unit;
         else txt = fmtNum(v * arg, arg) + ' ' + unit;
       }
@@ -925,7 +948,7 @@ function renderSettings() {
     let html = `<table><thead><tr><th>${group}</th><th style="text-align:right">Value</th></tr></thead><tbody>`;
     for (const [label, addr, type, scale, unit] of rows) {
       let v, txt;
-      if (type === 'k') { v = at(addr); txt = v === undefined ? '--' : tK(v).toFixed(1) + ' °C'; }
+      if (type === 'k') { v = at(addr); txt = v === undefined ? '--' : degF(tK(v)) + ' °F'; }
       else { v = type === 'u32' ? at(addr) * 65536 + at(addr + 1) : at(addr); const x = v * scale; txt = v === undefined || isNaN(x) ? '--' : x.toFixed(scale >= 1 ? 0 : scale >= 0.1 ? 1 : scale >= 0.01 ? 3 : unit === 'V' || unit === 'A' ? 3 : 2) + ' ' + unit; }
       html += `<tr><td>${label}</td><td class="num">${txt}</td></tr>`;
     }
@@ -935,6 +958,8 @@ function renderSettings() {
 }
 function renderInfo() {
   const i = S.info, rows = [['Battery', S.demo ? 'Demo battery' : S.devName || '--'], ['BMS type', S.demo ? 'Shanmu / Mottcell (demo)' : S.proto ? S.proto.label : '--'],
+    ['Cycles', S.live ? String(S.live.cycles) : ''], ['Health', S.live && S.live.soh ? S.live.soh + '%' : ''],
+    ['Design capacity', S.live && S.live.designAh ? S.live.designAh.toFixed(0) + ' Ah' : ''], ['Full capacity', S.live && S.live.fullAh ? S.live.fullAh.toFixed(1) + ' Ah' : ''],
     ['Firmware', i.firmware], ['Model SN', i.model], ['Pack SN', i.packSn], ['Protocol version', i.protocol]];
   $('#info').innerHTML = rows.filter(r => r[1]).map(([k, v]) => `<dt>${k}</dt><dd></dd>`).join('');
   const dds = $('#info').querySelectorAll('dd'); rows.filter(r => r[1]).forEach(([, v], n) => dds[n].textContent = v);
@@ -986,7 +1011,7 @@ function stopDemo() {
   if (!S.demo) return;
   S.demo = false; clearInterval(demoTimer); S.live = null; S.settings = null; S.info = {};
   $('#thresholds').innerHTML = '<p class="empty">Reading from the battery…</p>'; renderInfo();
-  ['#soc', '#fV', '#fA', '#fW', '#fSpread', '#fAvg', '#fCyc'].forEach(s => $(s).textContent = '--');
+  ['#soc', '#fV', '#fA', '#fW', '#fSpread', '#fTemp', '#fMos'].forEach(s => $(s).textContent = '--');
   $('#stateLine').textContent = 'Waiting for the first reading…'; $('#capLine').textContent = '';
   $('#cells').textContent = ''; $('#temps').textContent = ''; $('#chips').textContent = ''; $('#socFill').style.width = '0';
   $('#histNote').textContent = 'History keeps the last 24 hours on this device while the page is open and connected.';
@@ -1004,6 +1029,16 @@ async function setWake(on) {
 }
 const loadScript = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => bad(new Error('Could not load ' + src)); document.head.append(s); });
 
+function showView(name) {
+  if (!['battery', 'history', 'details'].includes(name)) name = 'battery';
+  for (const v of document.querySelectorAll('.view')) v.hidden = v.id !== 'view-' + name;
+  document.querySelectorAll('.tabs button').forEach(b => b.dataset.view === name ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
+  store.set('view', name);
+  scrollTo(0, 0);
+  if (name === 'history') drawChart();
+  if (name === 'details' && $('#diag').open) $('#log').textContent = S.logLines.slice(-200).join('\n');
+}
+
 async function init() {
   S.hist = store.get('hist', []).filter(p => Array.isArray(p) && p[0] > Date.now() - 86400000);
   $('#ratedAh').value = store.get('ratedAh', '') || '';
@@ -1013,6 +1048,8 @@ async function init() {
   document.querySelectorAll('#segSeries button').forEach(b => b.setAttribute('aria-pressed', b.dataset.k === S.series));
   document.querySelectorAll('#segWin button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.w === S.win));
 
+  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showView(b.dataset.view));
+  showView(store.get('view', 'battery'));
   $('#btnConnect').onclick = () => NATIVE ? openScanner() : pickWeb();
   $('#btnDisconnect').onclick = disconnect;
   $('#btnScanClose').onclick = closeScanner;
