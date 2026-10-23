@@ -70,6 +70,9 @@ A separate service, `11110001-1111-…`, with characteristics `…0002` (data) a
 ## Type 2: Pace
 
 Plain Modbus (no prefix). The service is whichever one has notify + write characteristics; the app writes to the *last* characteristic.
-Requests: `01 03 00 00 00 3B`, `01 03 00 53 00 37`, `01 03 00 AA 00 23` (+ CRC).
-Live: reg 0 current (int16, 10 mA), 1 voltage (10 mV), 2 SOC, 7 cycles, 9 alarms, 10 protections, 11 status (bit 10 charge FET, bit 11 discharge FET, bit 15 heater), 15 cell count, 16–30 cells (mV), 46 temp count, 47–56 temps (int16, 0.1 °C), 57 MOSFET temp.
+Requests: `01 03 00 00 00 3B`, `01 03 00 53 00 37`, `01 03 00 AA 00 23` (+ CRC). Slave address 1, function 0x03 only.
+Live: reg 0 current (int16, 10 mA), 1 voltage (10 mV), 2 SOC, 7 cycles, 9 alarms, 10 protections, 11 status, 15 cell count, 16–45 cells (mV, 30 slots), 46 temp count, 47–56 temps (int16, 0.1 °C), 57 MOSFET temp. Alarm and protection bits use the same tables as Shanmu (SMB Link uses one table for both).
+Status reg 11, per SMB Link's hidden status panel: bit 10 charge MOSFET, bit 11 discharge MOSFET, bit 13 "Acin" (meaning undocumented), bit 15 heater, bits 0/1/2/4/5 faults (same as Shanmu). The panel also has labels for "charging limiter" and "reverse connection" but never maps them to a bit; bits 8, 9, 12 and 14 are unlabelled.
+SMB Link reads only the three blocks above. Registers 0x3B–0x52 and anything past 0xCC are never read.
+Observed on a 300 Ah 4S pack: reg 8 = 0, reg 12 = 0, reg 13 = 0, reg 14 = 0xC000, reg 58 = 0xFFFF (all undocumented).
 The public Pace map also puts SOH in reg 3 and remaining / full / design capacity in regs 4/5/6 (10 mAh units); SMB Link doesn't display these.

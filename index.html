@@ -178,13 +178,32 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
 .etoday dd{margin:2px 0 0;font:500 24px/1.15 var(--display);font-variant-numeric:tabular-nums;white-space:nowrap}
 .etoday dd.pos{color:var(--good)}
 .ebox{position:relative;height:170px}
+/* diagnose */
+.dtable td{vertical-align:top}
+.dtable td:first-child{color:var(--muted);white-space:nowrap;padding-right:14px}
+.dtable td:nth-child(2){font-weight:500}
+.dtable .from{margin-top:3px}
+.nowrap{white-space:nowrap}
+.events li{min-width:0}
+.evwin{max-width:100%}
+.dtable .src{font:12px/1.4 var(--mono);color:var(--muted);display:block;font-weight:400}
+.dtable b.on{color:var(--good)} .dtable b.off{color:var(--bad)} .dtable b.unk{color:var(--warn)}
+.tag{display:inline-block;font:600 10.5px/1 var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--sunk);border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:1px}
+.events{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.events li.empty{color:var(--muted);font-size:14.5px}
+.evbtn{width:100%;text-align:left;display:grid;grid-template-columns:auto 1fr;gap:2px 12px;padding:10px 12px;background:var(--sunk);border-radius:10px}
+.evbtn time{font:500 13px var(--mono);color:var(--muted);white-space:nowrap}
+.evbtn span{font-size:14.5px}
+.evbtn span.bad{color:var(--bad)} .evbtn span.good{color:var(--good)}
+.evwin{margin:6px 0 4px;max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.evwin table{font:12px/1.4 var(--mono)} .evwin th,.evwin td{padding:4px 8px;white-space:nowrap} .evwin tr.hit td{background:var(--warn-soft)}
 /* pages + bottom tabs */
 .wrap{padding-bottom:calc(88px + env(safe-area-inset-bottom,0px))!important}
 .view{display:grid;gap:14px;min-width:0}
 .view>.cols{margin:0}
-.tabs{position:fixed;left:0;right:0;bottom:0;z-index:15;display:grid;grid-template-columns:repeat(3,1fr);background:var(--surface);border-top:1px solid var(--line);
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:15;display:grid;grid-template-columns:repeat(4,1fr);background:var(--surface);border-top:1px solid var(--line);
   padding-bottom:env(safe-area-inset-bottom,0px);padding-left:max(0px,env(safe-area-inset-left,0px));padding-right:max(0px,env(safe-area-inset-right,0px))}
-.tabs button{border:0;border-radius:0;background:none;display:grid;justify-items:center;gap:2px;padding:9px 4px 10px;font-size:12.5px;font-weight:600;color:var(--muted);letter-spacing:.03em}
+.tabs button{border:0;border-radius:0;background:none;display:grid;justify-items:center;gap:2px;padding:9px 2px 10px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.03em}
 .tabs svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .tabs button[aria-current=page]{color:var(--accent)}
 #view-history .chartbox{height:min(52vh,420px)}
@@ -304,9 +323,39 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
       <div><button class="small" id="btnRereadSettings" disabled>Read again</button></div>
     </details>
 
+  </main>
+
+  <main id="view-diagnose" class="view" hidden>
+    <section class="card" aria-labelledby="hChg">
+      <div class="card-h"><h2 id="hChg">Charging diagnostics</h2><span class="chip" id="dVerdict">Not connected</span></div>
+      <div class="tbl"><table class="dtable"><thead><tr><th>Reading</th><th>Now</th></tr></thead><tbody id="dRows"><tr><td colspan="2" class="muted">Connect the battery to see live diagnostics.</td></tr></tbody></table></div>
+      <p class="note">"Unknown" means the battery's protocol doesn't report it. Values from SMB Link's own decoding are marked <b>vendor</b>; values from Pace's published register map that SMB Link doesn't use are marked <b>Pace map</b>.</p>
+    </section>
+
+    <section class="card" aria-labelledby="hRegs">
+      <div class="card-h"><h2 id="hRegs">Status registers</h2></div>
+      <div class="tbl"><table class="dtable"><thead><tr><th>Register</th><th>Decoded</th></tr></thead><tbody id="dRegs"></tbody></table></div>
+    </section>
+
+    <section class="card" aria-labelledby="hEvents">
+      <div class="card-h"><h2 id="hEvents">Events</h2><span class="note" id="evCount"></span></div>
+      <p class="note">Logged automatically when the charge or discharge MOSFET switches, any alarm, protection or fault turns on or off, the charger-input flag changes, or charging current drops from over 1 A to almost nothing. Tap one to see every reading 2 minutes before and after.</p>
+      <ul class="events" id="events"><li class="empty">No events yet.</li></ul>
+    </section>
+
+    <section class="card" aria-labelledby="hDlog">
+      <div class="card-h"><h2 id="hDlog">Diagnostic log</h2></div>
+      <p class="note" id="dlogInfo">Every reading (about every 2 seconds) is saved with the battery's full raw reply, for 3 days.</p>
+      <div class="actions" role="group" aria-label="Export diagnostic log as CSV">
+        <span class="note">Export CSV:</span>
+        <button class="small" data-span="3600000">Last hour</button><button class="small" data-span="21600000">6 h</button><button class="small" data-span="86400000">24 h</button><button class="small" data-span="0">All 3 days</button>
+      </div>
+      <p class="note" id="dlogStatus"></p>
+    </section>
+
     <details class="card" id="diag">
-      <summary><h2>Diagnostics</h2></summary>
-      <p class="note">Registers the battery sends that Ferro doesn't display yet.</p>
+      <summary><h2>Raw data and packet log</h2></summary>
+      <p class="note">Registers the battery sends that Ferro doesn't display elsewhere.</p>
       <div class="tbl"><table><thead><tr><th>Register</th><th style="text-align:right">Hex</th><th style="text-align:right">Decimal</th><th style="text-align:right">÷ 100</th></tr></thead><tbody id="rawRegs"></tbody></table></div>
       <dl class="kv" id="diagKv"></dl>
       <div class="card-h"><span class="note">Packet log</span><div class="actions"><button class="small" id="btnCopyLog">Copy log</button></div></div>
@@ -318,6 +367,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
 <nav class="tabs" aria-label="Pages">
   <button data-view="battery" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="16" height="10" rx="2"/><path d="M21 10v4"/><path d="M7 10v4M10 10v4"/></svg>Battery</button>
   <button data-view="history"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-6 4 3 5-7 4 4"/><path d="M3 21h18"/></svg>History</button>
+  <button data-view="diagnose"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></svg>Diagnose</button>
   <button data-view="details"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Details</button>
 </nav>
 
@@ -406,6 +456,9 @@ const WARN = ['Cell overvoltage', 'Cell undervoltage', 'Pack overvoltage', 'Pack
 const PROT = ['Cell overvoltage', 'Cell undervoltage', 'Pack overvoltage', 'Pack undervoltage', 'Charge overcurrent', 'Discharge overcurrent', 'Short circuit',
   'Charger overvoltage', 'Charge high temp', 'Discharge high temp', 'Charge low temp', 'Discharge low temp', 'MOSFET high temp', 'Ambient high temp', 'Ambient low temp'];
 const FAULT = { 0: 'Charge MOSFET fault', 1: 'Discharge MOSFET fault', 2: 'Temperature sensor fault', 4: 'Cell fault', 5: 'Front-end sampling fault' };
+const unlabelledBits = (v, b) => { const known = new Set([0, 1, 2, 4, 5, b.chg, b.dsg, b.acin, b.heat]); const out = []; for (let i = 0; i < 16; i++) if (bit(v, i) && !known.has(i)) out.push(i); return out; };
+const hex4 = v => '0x' + (v ?? 0).toString(16).toUpperCase().padStart(4, '0');
+const bin16 = v => (v ?? 0).toString(2).padStart(16, '0').replace(/(.{4})(?=.)/g, '$1 ');
 const names = (v, list) => list.map((n, i) => n && bit(v, i) ? n : null).filter(Boolean);
 const faults = v => Object.entries(FAULT).filter(([b]) => bit(v, +b)).map(([, n]) => n);
 function take(r, start, max, count, ok) {
@@ -424,19 +477,21 @@ function decodeShanmu(r) {
     cells: take(r, 20, 20, r[19], x => x !== 0xffff && x > 0).map(x => x / 1000),
     temps: take(r, 41, 10, r[40], x => x !== 0xffff).filter(x => x !== 0xffff).map(x => (x - 2730) / 10),
     mos: r[51] !== 0xffff && r[51] ? (r[51] - 2730) / 10 : null,
-    chg: bit(status, 9), dsg: bit(status, 10), heat: bit(status, 15),
+    chg: bit(status, 9), dsg: bit(status, 10), heat: bit(status, 15), acin: bit(status, 13), balance: null,
     unmapped: [5, 6, 7, 8, 9, 10, 11, 13, 17, 18, 52].map(i => [i, r[i]]),
+    src: { a: 'regs 0–1, signed, ×10 mA', v: 'regs 2–3, ×10 mV', soc: 'reg 4', status: 16, warn: 14, prot: 15, bits: { chg: 9, dsg: 10, acin: 13, heat: 15 }, cells: 'regs 20–39', temps: 'regs 41–51' },
   };
 }
 function decodePace(r) {
   const status = r[11];
   const d = {
     a: i16(r[0]) / 100, v: r[1] / 100, soc: r[2], cycles: r[7], warn: r[9], prot: r[10], status,
-    cells: take(r, 16, 15, r[15], x => x !== 0xffff && x > 0).map(x => x / 1000),
+    cells: take(r, 16, 30, r[15], x => x !== 0xffff && x > 0).map(x => x / 1000),
     temps: take(r, 47, 10, r[46], x => x !== 0xffff).filter(x => x !== 0xffff).map(x => i16(x) / 10),
     mos: r[57] !== 0xffff ? i16(r[57]) / 10 : null,
-    chg: bit(status, 10), dsg: bit(status, 11), heat: bit(status, 15),
+    chg: bit(status, 10), dsg: bit(status, 11), heat: bit(status, 15), acin: bit(status, 13), balance: r[12],
     unmapped: [8, 12, 13, 14, 58].map(i => [i, r[i]]),
+    src: { a: 'reg 0, signed, ×10 mA', v: 'reg 1, ×10 mV', soc: 'reg 2', status: 11, warn: 9, prot: 10, bal: 12, bits: { chg: 10, dsg: 11, acin: 13, heat: 15 }, cells: 'regs 16–45', temps: 'regs 47–57' },
   };
   // Pace's published map puts SOH and capacities (10 mAh units) in 3–6. SMB Link never shows them, so accept only sane values.
   const rem = r[4] / 100, full = r[5] / 100;
@@ -500,7 +555,7 @@ const PACE_SETTINGS = [
 const S = {
   demo: true, device: null, proto: null, rx: null, tx: null, userClosed: false, reconnectTry: 0,
   live: null, settings: null, info: {}, lastLive: 0, frames: 0, crcFails: 0,
-  hist: [], histMin: [], bucket: null, eIn: 0, eOut: 0, lastET: 0, demoHist: [], logLines: [], rawSeen: 0, devName: '', active: false, pollTimer: null, wakeLock: null,
+  hist: [], histMin: [], bucket: null, events: [], recentA: [], prevDiag: null, eIn: 0, eOut: 0, lastET: 0, demoHist: [], logLines: [], rawSeen: 0, devName: '', active: false, pollTimer: null, wakeLock: null,
   series: 'w', win: 3600000,
 };
 const store = {
@@ -641,7 +696,7 @@ async function connect() {
   setPill('busy', S.reconnectTry ? 'Reconnecting…' : 'Connecting…');
   setBanner(null);
   try {
-    S.active = false; S.proto = null; S.asm = null; S.detecting = false; S.rawSeen = 0; S.lastLive = 0; S.tries = 0;
+    S.active = false; S.proto = null; S.asm = null; S.detecting = false; S.rawSeen = 0; S.lastLive = 0; S.tries = 0; S.prevDiag = null; S.recentA = [];
     await BLE.connect(onDrop);
     S.active = true;
     const services = await BLE.services();
@@ -773,6 +828,7 @@ function handleFrame(f) {
     if (S.lastLive === 0) log('First reading: ' + d.v.toFixed(2) + ' V, ' + d.soc + ' %, ' + d.cells.length + ' cells');
     S.lastLive = Date.now();
     setLive(d);
+    if (!S.demo) diagRecord(d, f.regs);
     setPill('live', 'Live');
     if (S.settings) renderSettings();
   } else if (f.kind === 'settings') {
@@ -802,8 +858,8 @@ const DB = {
   open() {
     return new Promise(ok => {
       try {
-        const r = indexedDB.open('cellwatch', 1);
-        r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('fine'); d.createObjectStore('min'); };
+        const r = indexedDB.open('cellwatch', 2);
+        r.onupgradeneeded = () => { const d = r.result; for (const n of ['fine', 'min', 'diag', 'events']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n); };
         r.onsuccess = () => { this.db = r.result; ok(true); };
         r.onerror = () => ok(false);
       } catch (e) { ok(false); }
@@ -811,6 +867,18 @@ const DB = {
   },
   tx(store, mode) { return this.db.transaction(store, mode).objectStore(store); },
   put(store, p) { if (this.db) try { this.tx(store, 'readwrite').put(p, p[0]); } catch (e) {} },
+  putKV(store, k, v) { if (this.db) try { this.tx(store, 'readwrite').put(v, k); } catch (e) {} },
+  range(store, from, to) {
+    return new Promise(ok => {
+      if (!this.db) return ok([]);
+      try {
+        const os = this.tx(store), kr = IDBKeyRange.bound(from, to), ks = os.getAllKeys(kr), vs = os.getAll(kr);
+        vs.onsuccess = () => ok(ks.result.map((k, i) => [k, vs.result[i]]));
+        vs.onerror = () => ok([]);
+      } catch (e) { ok([]); }
+    });
+  },
+  count(store) { return new Promise(ok => { if (!this.db) return ok(0); try { const r = this.tx(store).count(); r.onsuccess = () => ok(r.result); r.onerror = () => ok(0); } catch (e) { ok(0); } }); },
   all(store) {
     return new Promise(ok => {
       if (!this.db) return ok([]);
@@ -830,6 +898,8 @@ async function loadHistory() {
   DB.prune('fine', now - FINE_KEEP); DB.prune('min', now - MIN_KEEP);
   S.hist = (await DB.all('fine')).filter(p => p[0] >= now - FINE_KEEP);
   S.histMin = (await DB.all('min')).filter(p => p[0] >= now - MIN_KEEP);
+  DB.prune('diag', now - DIAG_KEEP); DB.prune('events', now - EVT_KEEP);
+  S.events = (await DB.all('events')).filter(e => e && e.t >= now - EVT_KEEP).sort((a, b) => b.t - a.t);
   if (Array.isArray(old)) for (const p of old) addToMinute(p);
   log(`History loaded: ${S.hist.length} readings, ${S.histMin.length} minutes`);
 }
@@ -864,12 +934,10 @@ function recordHistory(d) {
   if (!$('#view-history').hidden) drawChart();
 }
 const histSource = () => S.demo ? S.demoHist : S.win > FINE_KEEP ? S.histMin : S.hist;
-function exportCsv() {
+async function exportCsv() {
   const t0 = Date.now() - S.win;
   const rows = histSource().filter(p => p[0] >= t0).map(([t, v, a, soc]) => [new Date(t).toISOString(), v, a, (v * a).toFixed(1), soc].join(','));
-  const blob = new Blob(['time,volts,amps,watts,soc\n' + rows.join('\n')], { type: 'text/csv' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'battery-' + new Date().toISOString().slice(0, 10) + '.csv';
-  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  await saveFile('ferro-history-' + new Date().toISOString().slice(0, 10) + '.csv', 'time,volts,amps,watts,soc\n' + rows.join('\n') + '\n');
 }
 
 function drawChart() {
@@ -979,6 +1047,192 @@ function renderEnergy() {
   g.fillText('▲ in ' + fmtE(max), 2, 7);
 }
 
+/* ================= diagnostics ================= */
+// Every live reply is stored raw (all registers) so any field can be re-decoded later.
+const DIAG_KEEP = 3 * 86400000, EVT_KEEP = 30 * 86400000;
+const tagH = t => `<span class="tag">${t}</span>`;
+const yesNo = (v, on = 'Enabled', off = 'Disabled') => v === null || v === undefined ? '<b class="unk">Unknown</b>' : v ? `<b class="on">${on}</b>` : `<b class="off">${off}</b>`;
+const cellExt = cells => {
+  if (!cells.length) return null;
+  let mx = 0, mn = 0;
+  cells.forEach((c, i) => { if (c > cells[mx]) mx = i; if (c < cells[mn]) mn = i; });
+  return { mx, mn, max: cells[mx], min: cells[mn], diff: Math.round((cells[mx] - cells[mn]) * 1000) };
+};
+const decodeRaw = (p, regs) => { const d = p === 'shanmu' ? decodeShanmu(regs) : decodePace(regs); if ($('#flipSign').checked) d.a = -d.a; d.w = d.v * d.a; return d; };
+const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmtWhen = t => { const d = new Date(t), today = dayKey(Date.now()) === dayKey(t); return (today ? '' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) + ' ') + d.toTimeString().slice(0, 8); };
+
+function diagRecord(d, regs) {
+  const t = Date.now();
+  DB.putKV('diag', t, { p: S.proto === PROTO.shanmu ? 'shanmu' : 'pace', r: Uint16Array.from(regs) });
+  detectEvents(d, t);
+  if (t - (S.lastPrune || 0) > 3600000) { S.lastPrune = t; DB.prune('diag', t - DIAG_KEEP); DB.prune('events', t - EVT_KEEP); }
+}
+
+function detectEvents(d, t) {
+  const p = S.prevDiag, fl = d.status & 0x37;
+  S.recentA.push(d.a); if (S.recentA.length > 4) S.recentA.shift();
+  S.prevDiag = { chg: d.chg, dsg: d.dsg, acin: d.acin, warn: d.warn, prot: d.prot, fl };
+  if (!p) return;
+  const items = [];
+  if (p.chg !== d.chg) items.push([d.chg ? 'good' : 'bad', `Charge MOSFET turned ${d.chg ? 'on' : 'off'}`]);
+  if (p.dsg !== d.dsg) items.push([d.dsg ? 'good' : 'bad', `Discharge MOSFET turned ${d.dsg ? 'on' : 'off'}`]);
+  if (p.acin !== d.acin) items.push(['', `Charger-input flag (Acin) turned ${d.acin ? 'on' : 'off'}`]);
+  const diff = (a, b, list, what) => list.forEach((n, i) => { if (!n || bit(a, i) === bit(b, i)) return; items.push([bit(b, i) ? 'bad' : 'good', `${n} ${what} ${bit(b, i) ? 'on' : 'cleared'}`]); });
+  diff(p.prot, d.prot, PROT, 'protection');
+  diff(p.warn, d.warn, WARN, 'alarm');
+  for (const [bi, n] of Object.entries(FAULT)) if (bit(p.fl, +bi) !== bit(fl, +bi)) items.push([bit(fl, +bi) ? 'bad' : 'good', `${n} ${bit(fl, +bi) ? 'on' : 'cleared'}`]);
+  const prior = S.recentA.slice(0, -1);
+  if (prior.length >= 3) {
+    const avg = prior.reduce((x, y) => x + y, 0) / prior.length;
+    if (avg > 1 && d.a < 0.3 && t - (S.lastStop || 0) > 60000) { S.lastStop = t; items.push(['bad', `Charging current stopped: ${avg.toFixed(1)} A → ${d.a.toFixed(1)} A`]); }
+    if (avg < 0.3 && d.a > 1 && t - (S.lastStart || 0) > 60000) { S.lastStart = t; items.push(['good', `Charging current started: ${d.a.toFixed(1)} A`]); }
+  }
+  if (!items.length) return;
+  const ext = cellExt(d.cells);
+  const ev = { t, items, snap: { v: d.v, a: d.a, soc: d.soc, cells: d.cells, max: ext && ext.max, mx: ext && ext.mx + 1, chg: d.chg } };
+  S.events.unshift(ev);
+  DB.putKV('events', t, ev);
+  log('Event: ' + items.map(i => i[1]).join('; '));
+  renderEvents();
+}
+
+function renderDiag() {
+  if ($('#view-diagnose').hidden) return;
+  const d = S.live, rows = $('#dRows'), regs = $('#dRegs'), verdict = $('#dVerdict');
+  if (S.demo || !d || !d.src) {
+    rows.innerHTML = '<tr><td colspan="2" class="muted">Connect the battery to see live diagnostics. Demo data has no raw registers, so nothing is shown for it.</td></tr>';
+    regs.innerHTML = ''; verdict.className = 'chip'; verdict.textContent = 'Not connected';
+    return;
+  }
+  const s = d.src, b = s.bits, ext = cellExt(d.cells), V = tagH('vendor'), P = tagH('Pace map'), C = tagH('calculated');
+  const unk = '<b class="unk">Unknown</b>';
+  const signNote = $('#flipSign').checked ? 'Sign flipped in Setup' : '+ means into the battery (Pace convention, not yet confirmed on your battery)';
+  const al = names(d.warn, WARN), pr = names(d.prot, PROT), fa = faults(d.status);
+  const list = (arr, cls) => arr.length ? arr.map(x => `<b class="${cls}">${esc(x)}</b>`).join('<br>') : 'None';
+  let bal = [unk + '<span class="src">This BMS type doesn\'t report balancing</span>', '—'];
+  if (d.balance !== null && d.balance !== undefined) {
+    const on = []; for (let i = 0; i < 16; i++) if (bit(d.balance, i)) on.push('C' + (i + 1));
+    bal = [unk + `<span class="src">Reg ${s.bal} reads ${hex4(d.balance)}${on.length ? ` (would mean ${on.join(', ')} balancing)` : ''}. Pace's map calls it a per-cell balance mask, but that isn't verified on your battery yet.</span>`, `reg ${s.bal}` + P];
+  }
+  const temps = d.temps.length ? d.temps.map((t, i) => `T${i + 1} ${degF(t)} °F`).join(', ') : unk;
+  const R = [
+    ['Pack voltage', `${d.v.toFixed(2)} V`, s.v + V],
+    ['Battery current', `${d.a > 0 ? '+' : ''}${d.a.toFixed(2)} A<span class="src">${signNote}</span>`, s.a + V],
+    ['Charge MOSFET', yesNo(d.chg), `reg ${s.status} bit ${b.chg}` + V],
+    ['Discharge MOSFET', yesNo(d.dsg), `reg ${s.status} bit ${b.dsg}` + V],
+    ['Charging allowed', unk + `<span class="src">There's no separate flag. The charge MOSFET is the BMS's charge switch, and it's ${d.chg ? 'on, so the BMS is not blocking charging' : 'off, so the BMS is blocking charging'}.</span>`, '—'],
+    ['Charger input (Acin)', yesNo(d.acin, 'On', 'Off') + '<span class="src">SMB Link labels this "Acin". Its exact meaning isn\'t documented.</span>', `reg ${s.status} bit ${b.acin}` + V],
+    ['Highest cell', ext ? `${ext.max.toFixed(3)} V (C${ext.mx + 1})` : unk, s.cells + V],
+    ['Lowest cell', ext ? `${ext.min.toFixed(3)} V (C${ext.mn + 1})` : unk, s.cells + V],
+    ['Cell difference', ext ? `${ext.diff} mV` : unk, C],
+    ['Balancing', bal[0], bal[1]],
+    ['Active alarms', list(al, 'unk'), `reg ${s.warn} = ${hex4(d.warn)}` + V],
+    ['Active protections', list(pr, 'off'), `reg ${s.prot} = ${hex4(d.prot)}` + V],
+    ['Active faults', list(fa, 'off'), `reg ${s.status} bits 0–5` + V],
+    ['Battery temperature', temps + (d.mos !== null ? `<span class="src">MOSFET ${degF(d.mos)} °F</span>` : ''), s.temps + V],
+    ['State of charge', `${d.soc}%`, s.soc + V],
+    ['Heater', yesNo(d.heat, 'On', 'Off'), `reg ${s.status} bit ${b.heat}` + V],
+  ];
+  rows.innerHTML = R.map(([k, v, src]) => `<tr><td>${k}</td><td>${v}${src && src !== '—' ? `<span class="src from">${src}</span>` : ''}</td></tr>`).join('');
+  const blocked = !d.chg;
+  verdict.className = 'chip ' + (blocked ? 'bad' : 'good');
+  verdict.textContent = blocked ? 'BMS has cut charging' : 'BMS charge path open';
+
+  const ul = unlabelledBits(d.status, b);
+  const statusDec = [`Charge MOSFET ${d.chg ? 'on' : 'off'} (bit ${b.chg})`, `Discharge MOSFET ${d.dsg ? 'on' : 'off'} (bit ${b.dsg})`, `Acin ${d.acin ? 'on' : 'off'} (bit ${b.acin})`, `Heater ${d.heat ? 'on' : 'off'} (bit ${b.heat})`]
+    .concat(fa).concat(ul.length ? [`Unlabelled bits set: ${ul.join(', ')}`] : []);
+  const warnExtra = [6, 7].filter(i => bit(d.warn, i)), protExtra = bit(d.prot, 15) ? [15] : [];
+  const regRow = (label, v, dec) => `<tr><td>${label}<span class="src nowrap">${hex4(v)}</span><span class="src nowrap">${bin16(v)}</span></td><td>${dec}</td></tr>`;
+  let html = regRow(`Alarms (reg ${s.warn})`, d.warn, (al.length ? al.map(esc).join(', ') : 'None') + (warnExtra.length ? `<span class="src">Unlabelled bits set: ${warnExtra.join(', ')}</span>` : ''))
+    + regRow(`Protections (reg ${s.prot})`, d.prot, (pr.length ? pr.map(esc).join(', ') : 'None') + (protExtra.length ? '<span class="src">Unlabelled bit 15 set</span>' : ''))
+    + regRow(`Status (reg ${s.status})`, d.status, statusDec.map(esc).join('<br>'));
+  if (d.balance !== null && d.balance !== undefined) html += regRow(`Balance? (reg ${s.bal})`, d.balance, 'Unverified meaning (Pace map: one bit per cell)');
+  for (const [i, v] of d.unmapped) if (i !== s.bal) html += regRow(`Reg ${i}`, v, 'Unknown');
+  regs.innerHTML = html;
+}
+
+function renderEvents() {
+  const ul = $('#events');
+  $('#evCount').textContent = S.events.length ? `${S.events.length} in the last 30 days` : '';
+  if (!S.events.length) { ul.innerHTML = '<li class="empty">No events yet. They appear here while Ferro is connected.</li>'; return; }
+  ul.textContent = '';
+  for (const ev of S.events.slice(0, 150)) {
+    const li = document.createElement('li');
+    const b = document.createElement('button'); b.className = 'evbtn'; b.setAttribute('aria-expanded', 'false');
+    const tm = document.createElement('time'); tm.textContent = fmtWhen(ev.t);
+    const txt = document.createElement('div'); txt.style.display = 'grid'; txt.style.gap = '2px';
+    for (const [cls, t] of ev.items) { const sp = document.createElement('span'); sp.className = cls; sp.textContent = t; txt.append(sp); }
+    b.append(tm, txt);
+    b.onclick = () => toggleEventWindow(li, b, ev);
+    li.append(b); ul.append(li);
+  }
+}
+
+async function toggleEventWindow(li, btn, ev) {
+  const open = li.querySelector('.evwin');
+  if (open) { open.remove(); btn.setAttribute('aria-expanded', 'false'); return; }
+  btn.setAttribute('aria-expanded', 'true');
+  const box = document.createElement('div'); box.className = 'evwin'; box.textContent = 'Loading…'; li.append(box);
+  const rows = await DB.range('diag', ev.t - 120000, ev.t + 120000);
+  if (!rows.length) { box.innerHTML = '<p class="note" style="padding:8px 10px;margin:0">No readings stored for this time. The detailed log keeps 3 days.</p>'; return; }
+  let h = '<table><thead><tr><th>Time</th><th>V</th><th>A</th><th>High cell</th><th>Chg</th><th>Dsg</th><th>Acin</th><th>Protections / alarms</th></tr></thead><tbody>';
+  for (const [t, rec] of rows) {
+    const d = decodeRaw(rec.p, Array.from(rec.r)), ext = cellExt(d.cells);
+    const flags = names(d.prot, PROT).map(n => n + ' prot').concat(names(d.warn, WARN)).join(', ') || '—';
+    h += `<tr class="${t === ev.t ? 'hit' : ''}"><td>${new Date(t).toTimeString().slice(0, 8)}</td><td>${d.v.toFixed(2)}</td><td>${d.a.toFixed(2)}</td><td>${ext ? ext.max.toFixed(3) + ' C' + (ext.mx + 1) : '—'}</td><td>${d.chg ? 'on' : 'OFF'}</td><td>${d.dsg ? 'on' : 'OFF'}</td><td>${d.acin ? 'on' : 'off'}</td><td>${esc(flags)}</td></tr>`;
+  }
+  box.innerHTML = h + '</tbody></table>';
+  const hit = box.querySelector('tr.hit'); if (hit) box.scrollTop = hit.offsetTop - 60;
+}
+
+async function updateLogInfo() {
+  const n = await DB.count('diag');
+  $('#dlogInfo').textContent = `Every reading (about every 2 seconds) is saved with the battery's full raw reply and kept for 3 days. ${n.toLocaleString()} reading${n === 1 ? '' : 's'} stored on this phone.`;
+}
+
+async function saveFile(name, text) {
+  if (NATIVE && window.Native) {
+    const { Filesystem, Directory, Encoding, Share } = window.Native;
+    const res = await Filesystem.writeFile({ path: name, data: text, directory: Directory.Cache, encoding: Encoding.UTF8 });
+    try { await Share.share({ title: name, dialogTitle: 'Save or send ' + name, files: [res.uri] }); } catch (e) { if (!/cancel/i.test(e.message || '')) throw e; }
+    return;
+  }
+  const blob = new Blob([text], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+async function exportDiag(span) {
+  const st = $('#dlogStatus'), to = Date.now(), from = span ? to - span : 0;
+  st.textContent = 'Preparing…';
+  const rows = await DB.range('diag', from, to);
+  if (!rows.length) { st.textContent = 'No readings stored for that period yet.'; return; }
+  const evMap = new Map(S.events.map(e => [e.t, e.items.map(i => i[1]).join(' | ')]));
+  let nc = 0, nt = 0;
+  const dec = rows.map(([t, rec]) => { const d = decodeRaw(rec.p, Array.from(rec.r)); nc = Math.max(nc, d.cells.length); nt = Math.max(nt, d.temps.length); return [t, rec, d]; });
+  const q = x => { x = String(x); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+  const head = ['time_iso', 'time_local', 'bms', 'pack_v', 'current_a', 'power_w', 'soc_pct'];
+  for (let i = 1; i <= nc; i++) head.push(`cell${i}_v`);
+  head.push('cell_max_v', 'cell_max_no', 'cell_min_v', 'cell_min_no', 'cell_diff_mv');
+  for (let i = 1; i <= nt; i++) head.push(`temp${i}_f`);
+  head.push('mosfet_temp_f', 'charge_mosfet', 'discharge_mosfet', 'charger_input_acin', 'heater', 'balance_reg_unverified', 'alarm_reg', 'alarms', 'protection_reg', 'protections', 'status_reg', 'faults', 'unlabelled_status_bits', 'event', 'raw_live_registers_hex');
+  const out = [head.join(',')];
+  for (const [t, rec, d] of dec) {
+    const e = cellExt(d.cells), row = [new Date(t).toISOString(), new Date(t).toLocaleString('sv-SE'), rec.p, d.v.toFixed(2), d.a.toFixed(2), d.w.toFixed(1), d.soc];
+    for (let i = 0; i < nc; i++) row.push(d.cells[i] !== undefined ? d.cells[i].toFixed(3) : '');
+    row.push(e ? e.max.toFixed(3) : '', e ? e.mx + 1 : '', e ? e.min.toFixed(3) : '', e ? e.mn + 1 : '', e ? e.diff : '');
+    for (let i = 0; i < nt; i++) row.push(d.temps[i] !== undefined ? degF(d.temps[i]) : '');
+    row.push(d.mos !== null ? degF(d.mos) : '', d.chg ? 'on' : 'off', d.dsg ? 'on' : 'off', d.acin ? 'on' : 'off', d.heat ? 'on' : 'off',
+      d.balance === null || d.balance === undefined ? 'unknown' : hex4(d.balance), hex4(d.warn), names(d.warn, WARN).join('; '), hex4(d.prot), names(d.prot, PROT).join('; '),
+      hex4(d.status), faults(d.status).join('; '), unlabelledBits(d.status, d.src.bits).join(' '), evMap.get(t) || '', Array.from(rec.r, v => v.toString(16).padStart(4, '0')).join(' '));
+    out.push(row.map(q).join(','));
+  }
+  const stamp = new Date(to).toLocaleString('sv-SE').replace(/[: ]/g, '-').slice(0, 16);
+  try { await saveFile(`ferro-diagnostics-${stamp}.csv`, out.join('\n') + '\n'); st.textContent = `Exported ${dec.length.toLocaleString()} readings.`; }
+  catch (e) { st.textContent = 'Export failed: ' + (e.message || e); log('Export failed: ' + (e.message || e)); }
+}
+
 /* ================= render ================= */
 const fmtH = h => !isFinite(h) || h <= 0 ? null : h >= 48 ? (h / 24).toFixed(1) + ' days' : h >= 1 ? h.toFixed(1) + ' h' : Math.round(h * 60) + ' min';
 function render() {
@@ -1044,6 +1298,7 @@ function render() {
     rr.append(tr);
   }
   const kv = $('#diagKv');
+  renderDiag();
   kv.innerHTML = `<dt>Status register</dt><dd>${d.status.toString(2).padStart(16, '0')}</dd><dt>Alarm register</dt><dd>${d.warn.toString(2).padStart(16, '0')}</dd><dt>Protection register</dt><dd>${d.prot.toString(2).padStart(16, '0')}</dd><dt>Frames received</dt><dd>${S.demo ? 'demo' : S.frames + (S.crcFails ? ` (${S.crcFails} with CRC mismatch)` : '')}</dd>`;
 }
 
@@ -1159,13 +1414,13 @@ async function setWake(on) {
 const loadScript = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => bad(new Error('Could not load ' + src)); document.head.append(s); });
 
 function showView(name) {
-  if (!['battery', 'history', 'details'].includes(name)) name = 'battery';
+  if (!['battery', 'history', 'diagnose', 'details'].includes(name)) name = 'battery';
   for (const v of document.querySelectorAll('.view')) v.hidden = v.id !== 'view-' + name;
   document.querySelectorAll('.tabs button').forEach(b => b.dataset.view === name ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
   store.set('view', name);
   scrollTo(0, 0);
   if (name === 'history') drawChart();
-  if (name === 'details' && $('#diag').open) $('#log').textContent = S.logLines.slice(-200).join('\n');
+  if (name === 'diagnose') { renderDiag(); renderEvents(); updateLogInfo(); if ($('#diag').open) $('#log').textContent = S.logLines.slice(-200).join('\n'); }
 }
 
 async function init() {
@@ -1191,7 +1446,8 @@ async function init() {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && $('#wake').checked) setWake(true); });
   $('#segSeries').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.series = b.dataset.k; store.set('series', S.series); document.querySelectorAll('#segSeries button').forEach(x => x.setAttribute('aria-pressed', x === b)); drawChart(); };
   $('#segWin').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.win = +b.dataset.w; store.set('win', S.win); document.querySelectorAll('#segWin button').forEach(x => x.setAttribute('aria-pressed', x === b)); drawChart(); };
-  $('#btnCsv').onclick = exportCsv;
+  $('#btnCsv').onclick = () => exportCsv().catch(e => log('Export failed: ' + e.message));
+  document.querySelectorAll('[data-span]').forEach(b => b.onclick = () => exportDiag(+b.dataset.span));
   $('#btnClearHist').onclick = e => {
     const b = e.currentTarget;
     if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to erase all history'; setTimeout(() => { delete b.dataset.armed; b.textContent = 'Clear'; }, 4000); return; }
@@ -1210,9 +1466,8 @@ async function init() {
 
   await loadHistory();
   if (NATIVE) {
-    $('#btnCsv').hidden = true;
     $('#bannerText').textContent = 'Showing demo data. Close SMB Link, then tap Connect battery.';
-    try { await loadScript('ble-native.js'); }
+    try { await loadScript('native.js'); }
     catch (e) { showError('The Bluetooth module failed to load. Reinstall the app.'); $('#btnConnect').disabled = true; startDemo(); return; }
     const saved = store.get('device', null);
     if (saved && saved.id) {
