@@ -162,6 +162,16 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
 .kv dt{color:var(--muted)} .kv dd{margin:0;font-family:var(--mono);word-break:break-all}
 .log{background:var(--sunk);border:1px solid var(--line);border-radius:8px;max-height:260px;overflow:auto;font:12px/1.55 var(--mono);padding:8px 10px;white-space:pre-wrap;word-break:break-all;margin:0}
 .note{font-size:13.5px;color:var(--muted)}
+/* scanner sheet (Android app) */
+.sheet{position:fixed;inset:0;z-index:20;background:color-mix(in srgb,var(--ink) 40%,transparent);display:flex;align-items:flex-end;justify-content:center}
+.sheet-panel{background:var(--surface);width:100%;max-width:560px;max-height:85vh;border-radius:16px 16px 0 0;display:grid;grid-template-rows:auto auto 1fr auto;gap:10px;
+  padding-block:16px calc(16px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.sheet-panel h2{font:600 20px/1.2 var(--display);text-transform:uppercase;letter-spacing:.06em}
+.scanlist{list-style:none;margin:0;padding:0;overflow:auto;display:grid;gap:6px;align-content:start;min-height:120px}
+.devrow{width:100%;text-align:left;display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:10px 12px;border-radius:10px;background:var(--sunk)}
+.devrow .dn{font-weight:600;grid-column:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.devrow .di{grid-column:1;font-size:12px;color:var(--muted)}
+.devrow .dr{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:12.5px;color:var(--muted)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -182,7 +192,6 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
 
   <div class="banner demo" id="banner">
     <span id="bannerText">Showing demo data. Close SMB Link on your phone, then connect your battery to see real readings.</span>
-    <button class="link" id="btnShowAll">Battery not listed? Show all devices</button>
   </div>
 
   <section class="card" aria-label="Battery overview">
@@ -247,7 +256,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
           </div>
           <div class="field">
             <span>Options</span>
-            <label class="check"><input type="checkbox" id="wake"> Keep screen on</label>
+            <label class="check" id="wakeRow"><input type="checkbox" id="wake"> Keep screen on</label>
             <label class="check"><input type="checkbox" id="flipSign"> Current sign is reversed</label>
           </div>
         </div>
@@ -276,6 +285,18 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
     <div class="card-h"><span class="note">Packet log</span><div class="actions"><button class="small" id="btnCopyLog">Copy log</button></div></div>
     <pre class="log" id="log"></pre>
   </details>
+</div>
+
+<div class="sheet" id="scanSheet" hidden>
+  <div class="sheet-panel" role="dialog" aria-labelledby="scanTitle">
+    <div class="card-h"><h2 id="scanTitle">Choose your battery</h2><button class="small" id="btnScanClose">Close</button></div>
+    <div style="display:grid;gap:8px">
+      <p class="note" id="scanStatus">Scanning…</p>
+      <div class="banner err" id="scanHint" hidden><span>Location is off. Android hides Bluetooth devices from apps until it's on.</span><button class="small" id="btnLocation">Turn on location</button></div>
+    </div>
+    <ul class="scanlist" id="scanList"></ul>
+    <div class="card-h"><label class="check"><input type="checkbox" id="showUnnamed"> Show unnamed devices</label><button class="small" id="btnRescan">Scan again</button></div>
+  </div>
 </div>
 
 <script>
@@ -421,7 +442,7 @@ const SETTINGS = [
 const S = {
   demo: true, device: null, proto: null, rx: null, tx: null, userClosed: false, reconnectTry: 0,
   live: null, settings: null, info: {}, lastLive: 0, frames: 0, crcFails: 0,
-  hist: [], demoHist: [], logLines: [], pollTimer: null, wakeLock: null,
+  hist: [], demoHist: [], logLines: [], rawSeen: 0, devName: '', active: false, pollTimer: null, wakeLock: null,
   series: 'w', win: 3600000,
 };
 const store = {
@@ -438,63 +459,164 @@ function log(s) {
 }
 
 /* ================= bluetooth ================= */
+// Two backends: the Android app (Capacitor + native BLE plugin, which exposes window.BleClient) and Web Bluetooth in Chrome.
+const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const uuid16 = n => '0000' + n.toString(16).padStart(4, '0') + '-0000-1000-8000-00805f9b34fb';
 const OPTIONAL = (() => { const s = [0xfffa]; for (let i = 0xff00; i <= 0xffff; i++) if (i !== 0xfffa && i !== 0xfffd) s.push(i); return s.concat([0xfee7, 0xae00, 0xae30, '6e400001-b5a3-f393-e0a9-e50e24dcca9e']); })();
+const u8 = dv => new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
 
-async function pick(showAll) {
+const WebBle = {
+  dev: null, server: null, chars: new Map(),
+  async pick() {
+    const dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: OPTIONAL });
+    this.dev = dev; return { id: dev.id, name: dev.name || '' };
+  },
+  async connect(onDrop) {
+    this.dev.ongattserverdisconnected = onDrop;
+    this.server = await this.dev.gatt.connect();
+  },
+  async services() {
+    this.chars.clear();
+    const out = [];
+    for (const s of await this.server.getPrimaryServices()) {
+      const cs = await s.getCharacteristics().catch(() => []);
+      out.push({ uuid: s.uuid, chars: cs.map(c => { this.chars.set(s.uuid + '|' + c.uuid, c); return { uuid: c.uuid, props: { notify: c.properties.notify || c.properties.indicate, write: c.properties.write, writeNR: c.properties.writeWithoutResponse } }; }) });
+    }
+    return out;
+  },
+  async notify(svc, ch, cb) {
+    const c = this.chars.get(svc + '|' + ch);
+    c.addEventListener('characteristicvaluechanged', e => cb(u8(e.target.value)));
+    await c.startNotifications();
+  },
+  async write(svc, ch, bytes, withResp) {
+    const c = this.chars.get(svc + '|' + ch);
+    if (withResp && c.writeValueWithResponse) await c.writeValueWithResponse(bytes);
+    else if (!withResp && c.writeValueWithoutResponse) await c.writeValueWithoutResponse(bytes);
+    else await c.writeValue(bytes);
+  },
+  async disconnect() { if (this.dev && this.dev.gatt.connected) this.dev.gatt.disconnect(); },
+};
+
+const NativeBle = {
+  id: null, ready: false,
+  async init() {
+    if (!this.ready) { await BleClient.initialize(); this.ready = true; }
+    if (!(await BleClient.isEnabled())) { try { await BleClient.requestEnable(); } catch (e) {} }
+  },
+  async scan(cb) {
+    await this.init();
+    await BleClient.requestLEScan({ allowDuplicates: true }, r => cb({ id: r.device.deviceId, name: (r.localName || r.device.name || '').trim(), rssi: r.rssi, uuids: (r.uuids || []).map(u => u.toLowerCase()) }));
+  },
+  async stopScan() { try { await BleClient.stopLEScan(); } catch (e) {} },
+  async connect(onDrop) {
+    await this.init();
+    await BleClient.connect(this.id, () => onDrop(), { timeout: 15000 });
+  },
+  async services() {
+    return (await BleClient.getServices(this.id)).map(s => ({ uuid: s.uuid.toLowerCase(), chars: s.characteristics.map(c => ({ uuid: c.uuid.toLowerCase(),
+      props: { notify: !!(c.properties.notify || c.properties.indicate), write: !!c.properties.write, writeNR: !!c.properties.writeWithoutResponse } })) }));
+  },
+  async notify(svc, ch, cb) { await BleClient.startNotifications(this.id, svc, ch, dv => cb(u8(dv))); },
+  async write(svc, ch, bytes, withResp) {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (withResp) await BleClient.write(this.id, svc, ch, dv); else await BleClient.writeWithoutResponse(this.id, svc, ch, dv);
+  },
+  async disconnect() { try { await BleClient.disconnect(this.id); } catch (e) {} },
+};
+const BLE = NATIVE ? NativeBle : WebBle;
+
+// Web: Chrome's own device picker.
+async function pickWeb() {
   if (!navigator.bluetooth) return;
-  let dev;
+  let d;
+  try { d = await WebBle.pick(); }
+  catch (e) { if (e.name !== 'NotFoundError') showError('Could not open the device list: ' + e.message); return; }
+  beginSession(d.id, d.name);
+}
+
+// Android app: our own scanner, which lists every device it hears.
+const seen = new Map();
+const likely = d => d.uuids.some(u => u.startsWith('0000fffa')) || [15, 16].includes(d.name.replace(/\s/g, '').length);
+async function openScanner() {
+  seen.clear(); renderScan();
+  $('#scanSheet').hidden = false;
+  $('#scanHint').hidden = true;
   try {
-    dev = await navigator.bluetooth.requestDevice(showAll
-      ? { acceptAllDevices: true, optionalServices: OPTIONAL }
-      : { filters: [{ services: [0xfffa] }], optionalServices: OPTIONAL });
-  } catch (e) { if (e.name !== 'NotFoundError') showError('Could not open the device list: ' + e.message); return; }
+    await NativeBle.init();
+    if (BleClient.isLocationEnabled && !(await BleClient.isLocationEnabled().catch(() => true))) $('#scanHint').hidden = false;
+    await NativeBle.scan(d => { seen.set(d.id, { ...d, at: Date.now() }); renderScanSoon(); });
+    $('#scanStatus').textContent = 'Scanning…';
+    clearTimeout(S.scanStop); S.scanStop = setTimeout(() => { NativeBle.stopScan(); $('#scanStatus').textContent = 'Scan finished.'; }, 20000);
+  } catch (e) { $('#scanStatus').textContent = 'Could not scan: ' + e.message; log('Scan failed: ' + e.message); }
+}
+function closeScanner() { NativeBle.stopScan(); clearTimeout(S.scanStop); $('#scanSheet').hidden = true; }
+let scanRaf = 0;
+function renderScanSoon() { if (!scanRaf) scanRaf = setTimeout(() => { scanRaf = 0; renderScan(); }, 300); }
+function renderScan() {
+  const showUnnamed = $('#showUnnamed').checked;
+  const list = [...seen.values()].filter(d => showUnnamed || d.name).sort((a, b) => (likely(b) - likely(a)) || ((b.rssi || -127) - (a.rssi || -127)));
+  const ul = $('#scanList'); ul.textContent = '';
+  if (!list.length) { ul.innerHTML = '<li class="empty">No devices yet. Make sure SMB Link is fully closed, since the battery stops advertising while it is connected.</li>'; return; }
+  for (const d of list) {
+    const li = document.createElement('li');
+    const b = document.createElement('button'); b.className = 'devrow';
+    b.innerHTML = '<span class="dn"></span><span class="di mono"></span><span class="dr mono"></span>';
+    b.children[0].textContent = d.name || 'Unnamed device';
+    if (likely(d)) { const t = document.createElement('span'); t.className = 'chip good'; t.textContent = 'Looks like an SMB battery'; b.children[0].append(' ', t); }
+    b.children[1].textContent = d.id;
+    b.children[2].textContent = (d.rssi ?? '--') + ' dBm';
+    b.onclick = () => { closeScanner(); beginSession(d.id, d.name); };
+    li.append(b); ul.append(li);
+  }
+}
+
+function beginSession(id, name) {
   stopDemo();
-  S.device = dev; S.userClosed = false; S.reconnectTry = 0;
-  dev.addEventListener('gattserverdisconnected', onDrop);
-  $('#devName').textContent = dev.name || 'Unnamed battery';
-  await connect();
+  if (NATIVE) { NativeBle.id = id; store.set('device', { id, name }); }
+  S.devName = name || 'Unnamed battery'; S.userClosed = false; S.reconnectTry = 0;
+  $('#devName').textContent = S.devName;
+  connect();
 }
 
 async function connect() {
-  const dev = S.device;
   setPill('busy', S.reconnectTry ? 'Reconnecting…' : 'Connecting…');
   setBanner(null);
   try {
-    const server = await dev.gatt.connect();
-    const services = await server.getPrimaryServices();
+    S.active = false;
+    await BLE.connect(onDrop);
+    S.active = true;
+    const services = await BLE.services();
     log('Services: ' + services.map(s => s.uuid.slice(4, 8)).join(', '));
     let svc = services.find(s => s.uuid.startsWith('0000fffa'));
-    let proto = svc ? PROTO.shanmu : PROTO.pace;
-    if (!svc) {
-      for (const s of services) {
-        if (/^0000(1800|1801|180a|180f)/.test(s.uuid) || s.uuid.startsWith('11110001')) continue;
-        const cs = await s.getCharacteristics().catch(() => []);
-        if (cs.some(c => c.properties.notify) && cs.some(c => c.properties.write || c.properties.writeWithoutResponse)) { svc = s; break; }
-      }
-    }
+    const proto = svc ? PROTO.shanmu : PROTO.pace;
+    if (!svc) svc = services.find(s => !/^0000(1800|1801|180a|180f)/.test(s.uuid) && !s.uuid.startsWith('11110001') && s.chars.some(c => c.props.notify) && s.chars.some(c => c.props.write || c.props.writeNR));
     if (!svc) throw new Error('No battery data service found on this device.');
-    const chars = await svc.getCharacteristics();
-    const both = chars.find(c => c.properties.notify && (c.properties.write || c.properties.writeWithoutResponse));
-    let rx = both || chars.find(c => c.properties.notify);
-    let tx = both || (proto === PROTO.pace ? [...chars].reverse() : chars).find(c => c.properties.write || c.properties.writeWithoutResponse);
+    const chars = svc.chars;
+    const both = chars.find(c => c.props.notify && (c.props.write || c.props.writeNR));
+    const rx = both || chars.find(c => c.props.notify);
+    const tx = both || (proto === PROTO.pace ? [...chars].reverse() : chars).find(c => c.props.write || c.props.writeNR);
     if (!rx || !tx) throw new Error('The battery service is missing its read or write channel.');
     log(`Protocol ${proto.label}; service ${svc.uuid.slice(4, 8)}, notify ${rx.uuid.slice(4, 8)}, write ${tx.uuid.slice(4, 8)}`);
-    S.proto = proto; S.rx = rx; S.tx = tx; S.asm = new Reassembler(proto);
-    rx.addEventListener('characteristicvaluechanged', onNotify);
-    await rx.startNotifications();
+    S.proto = proto; S.svc = svc.uuid; S.rx = rx; S.tx = tx; S.asm = new Reassembler(proto); S.lastLive = 0;
+    await BLE.notify(svc.uuid, rx.uuid, onBytes);
     S.reconnectTry = 0;
     setPill('busy', 'Reading…');
     $('#btnConnect').hidden = true; $('#btnDisconnect').hidden = false; $('#btnRereadSettings').disabled = false;
     startPolling(true);
   } catch (e) {
-    log('Connect failed: ' + e.message);
-    if (S.reconnectTry) return scheduleReconnect();
+    log('Connect failed: ' + (e.message || e));
+    if (S.reconnectTry && !S.userClosed) return scheduleReconnect();
+    S.active = false;
     setPill('err', 'Not connected');
-    showError(e.message + ' Make sure SMB Link is closed on your phone, then try again.');
+    showError((e.message || 'Could not connect.') + ' Make sure SMB Link is fully closed, then try again.');
+    resetButtons();
   }
 }
 
 function onDrop() {
+  if (!S.active) return;
+  S.active = false;
   stopPolling();
   log('Disconnected');
   if (S.userClosed) { setPill('idle', 'Disconnected'); resetButtons(); return; }
@@ -505,21 +627,18 @@ function scheduleReconnect() {
   if (S.reconnectTry > 12) { setPill('err', 'Lost connection'); showError('The battery stopped responding. Move closer and press Connect battery.'); resetButtons(); return; }
   const wait = Math.min(30000, 1000 * 2 ** Math.min(S.reconnectTry - 1, 5));
   setPill('busy', `Reconnecting in ${Math.round(wait / 1000)} s…`);
-  setTimeout(() => { if (!S.userClosed && S.device && !S.device.gatt.connected) connect(); }, wait);
+  setTimeout(() => { if (!S.userClosed && !S.active) connect(); }, wait);
 }
-function disconnect() { S.userClosed = true; stopPolling(); if (S.device && S.device.gatt.connected) S.device.gatt.disconnect(); else onDrop(); }
+async function disconnect() { S.userClosed = true; stopPolling(); await BLE.disconnect(); onDrop(); setPill('idle', 'Disconnected'); resetButtons(); }
 function resetButtons() { $('#btnConnect').hidden = false; $('#btnDisconnect').hidden = true; $('#btnRereadSettings').disabled = true; }
 
 let wq = Promise.resolve();
 function write(bytes, label) {
   wq = wq.then(async () => {
-    if (!S.tx || !S.device || !S.device.gatt.connected) return;
-    const c = S.tx;
-    if (c.properties.write && c.writeValueWithResponse) await c.writeValueWithResponse(bytes);
-    else if (c.properties.writeWithoutResponse && c.writeValueWithoutResponse) await c.writeValueWithoutResponse(bytes);
-    else await c.writeValue(bytes);
+    if (!S.tx || !S.active) return;
+    await BLE.write(S.svc, S.tx.uuid, bytes, !!S.tx.props.write);
     if (label !== 'live') log('→ ' + hex(bytes) + '  (' + label + ')');
-  }).catch(e => log('Write failed: ' + e.message));
+  }).catch(e => log('Write failed: ' + (e.message || e)));
   return wq;
 }
 
@@ -527,6 +646,7 @@ function startPolling(full) {
   stopPolling();
   let n = 0;
   const cycle = async () => {
+    if (!S.active) return;
     const kinds = ['live'];
     if (full || n % 30 === 0) kinds.push(...Object.keys(S.proto.blocks).filter(k => k !== 'live'));
     full = false; n++;
@@ -538,43 +658,15 @@ function startPolling(full) {
 }
 function stopPolling() { if (S.pollTimer) clearTimeout(S.pollTimer); S.pollTimer = null; }
 
-function onNotify(ev) {
-  const dv = ev.target.value;
-  const bytes = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
+function onBytes(bytes) {
+  if (!S.asm) return;
+  if (!S.lastLive && S.rawSeen++ < 6) log('← raw ' + hex(bytes));
   for (const f of S.asm.feed(bytes)) {
     if (f.error !== undefined) { log('BMS returned Modbus error ' + f.error); continue; }
     S.frames++; if (!f.crc) S.crcFails++;
     if (f.kind !== 'live') log(`← ${f.kind} block, ${f.regs.length} registers${f.crc ? '' : ' (CRC mismatch, accepted)'}`);
     handleFrame(f);
   }
-}
-
-function handleFrame(f) {
-  const shanmu = S.proto === PROTO.shanmu;
-  if (f.kind === 'live') {
-    const d = shanmu ? decodeShanmu(f.regs) : decodePace(f.regs);
-    d.raw = f.regs;
-    if (S.lastLive === 0) log('First reading: ' + d.v.toFixed(2) + ' V, ' + d.soc + ' %, ' + d.cells.length + ' cells');
-    S.lastLive = Date.now();
-    setLive(d);
-    setPill('live', 'Live');
-  } else if (f.kind === 'settings' && shanmu) {
-    S.settings = f.regs; renderSettings();
-  } else if (f.kind === 'info') {
-    if (shanmu) { S.info.firmware = ascii(f.bytes.slice(0, 30)); S.info.model = ascii(f.bytes.slice(30, 60)); S.info.packSn = ascii(f.bytes.slice(60, 90)); }
-    else { S.info.firmware = ascii(f.bytes.slice(0, 20)); S.info.model = ascii(f.bytes.slice(20, 40)); }
-    renderInfo();
-  } else if (f.kind === 'proto') {
-    S.info.protocol = ascii(f.bytes.slice(0, 10)); renderInfo();
-  }
-}
-
-function setLive(d) {
-  if ($('#flipSign').checked) d.a = -d.a;
-  d.w = d.v * d.a;
-  S.live = d;
-  if (!S.demo) recordHistory(d);
-  render();
 }
 
 /* ================= history ================= */
@@ -731,7 +823,7 @@ function renderSettings() {
   }
 }
 function renderInfo() {
-  const i = S.info, rows = [['Battery', S.demo ? 'Demo battery' : (S.device && S.device.name) || '--'], ['BMS type', S.demo ? 'Shanmu / Mottcell (demo)' : S.proto ? S.proto.label : '--'],
+  const i = S.info, rows = [['Battery', S.demo ? 'Demo battery' : S.devName || '--'], ['BMS type', S.demo ? 'Shanmu / Mottcell (demo)' : S.proto ? S.proto.label : '--'],
     ['Firmware', i.firmware], ['Model SN', i.model], ['Pack SN', i.packSn], ['Protocol version', i.protocol]];
   $('#info').innerHTML = rows.filter(r => r[1]).map(([k, v]) => `<dt>${k}</dt><dd></dd>`).join('');
   const dds = $('#info').querySelectorAll('dd'); rows.filter(r => r[1]).forEach(([, v], n) => dds[n].textContent = v);
@@ -797,7 +889,9 @@ async function setWake(on) {
     else if (S.wakeLock) { await S.wakeLock.release(); S.wakeLock = null; }
   } catch (e) { log('Keep-screen-on not available: ' + e.message); }
 }
-function init() {
+const loadScript = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => bad(new Error('Could not load ' + src)); document.head.append(s); });
+
+async function init() {
   S.hist = store.get('hist', []).filter(p => Array.isArray(p) && p[0] > Date.now() - 86400000);
   $('#ratedAh').value = store.get('ratedAh', '') || '';
   $('#flipSign').checked = !!store.get('flip', false);
@@ -806,9 +900,12 @@ function init() {
   document.querySelectorAll('#segSeries button').forEach(b => b.setAttribute('aria-pressed', b.dataset.k === S.series));
   document.querySelectorAll('#segWin button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.w === S.win));
 
-  $('#btnConnect').onclick = () => pick(false);
-  $('#btnShowAll').onclick = () => pick(true);
+  $('#btnConnect').onclick = () => NATIVE ? openScanner() : pickWeb();
   $('#btnDisconnect').onclick = disconnect;
+  $('#btnScanClose').onclick = closeScanner;
+  $('#btnRescan').onclick = () => { NativeBle.stopScan().then(openScanner); };
+  $('#showUnnamed').onchange = renderScan;
+  $('#btnLocation').onclick = () => BleClient.openLocationSettings().catch(() => {});
   $('#btnRereadSettings').onclick = () => { if (S.proto) for (const k of Object.keys(S.proto.blocks).filter(k => k !== 'live')) write(request(S.proto, k), k); };
   $('#ratedAh').oninput = e => { store.set('ratedAh', e.target.value); render(); };
   $('#flipSign').onchange = e => store.set('flip', e.target.checked);
@@ -826,12 +923,25 @@ function init() {
   $('#diag').addEventListener('toggle', () => { if ($('#diag').open) { $('#log').textContent = S.logLines.slice(-200).join('\n'); } });
   addEventListener('resize', drawChart);
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', drawChart);
+  if (!('wakeLock' in navigator)) $('#wakeRow').hidden = true;
 
-  if (!window.isSecureContext || !navigator.bluetooth) {
-    $('#btnConnect').disabled = true; $('#btnShowAll').hidden = true;
+  if (NATIVE) {
+    $('#btnCsv').hidden = true;
+    $('#bannerText').textContent = 'Showing demo data. Close SMB Link, then tap Connect battery.';
+    try { await loadScript('ble-native.js'); }
+    catch (e) { showError('The Bluetooth module failed to load. Reinstall the app.'); $('#btnConnect').disabled = true; startDemo(); return; }
+    const saved = store.get('device', null);
+    if (saved && saved.id) {
+      $('#btnConnect').textContent = 'Change battery';
+      log('Reconnecting to saved battery ' + saved.id);
+      beginSession(saved.id, saved.name);
+      return;
+    }
+  } else if (!window.isSecureContext || !navigator.bluetooth) {
+    $('#btnConnect').disabled = true;
     setBanner('err', !window.isSecureContext
-      ? 'Bluetooth needs a secure page. Open this file directly in Chrome or Edge, or host it over https.'
-      : 'This browser has no Bluetooth support. Use Chrome or Edge on Android, Mac, Windows or ChromeOS. On iPhone, use the Bluefy browser. Showing demo data.');
+      ? 'Bluetooth needs a secure page. Open this over https or as a local file in Chrome or Edge.'
+      : 'This browser has no Bluetooth support. Use Chrome or Edge on Android, Mac, Windows or ChromeOS, or install the Cellwatch Android app. Showing demo data.');
   }
   startDemo();
   log('Ready.');
