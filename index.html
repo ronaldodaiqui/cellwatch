@@ -235,11 +235,11 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
       <div class="chartbox"><canvas id="chart" aria-label="History chart" role="img"></canvas></div>
       <div class="card-h">
         <div class="seg" role="group" aria-label="Time window" id="segWin">
-          <button data-w="900000" aria-pressed="false">15 m</button><button data-w="3600000" aria-pressed="true">1 h</button><button data-w="21600000" aria-pressed="false">6 h</button><button data-w="86400000" aria-pressed="false">24 h</button>
+          <button data-w="900000" aria-pressed="false">15 m</button><button data-w="3600000" aria-pressed="true">1 h</button><button data-w="21600000" aria-pressed="false">6 h</button><button data-w="86400000" aria-pressed="false">24 h</button><button data-w="604800000" aria-pressed="false">7 d</button><button data-w="2592000000" aria-pressed="false">30 d</button>
         </div>
         <div class="actions"><button class="small" id="btnCsv">Export CSV</button><button class="small" id="btnClearHist">Clear</button></div>
       </div>
-      <p class="note" id="histNote">History keeps the last 24 hours on this device while the app is open and connected.</p>
+      <p class="note" id="histNote">Cellwatch keeps every reading for 24 hours and one-minute averages for 30 days, saved on this phone. It records only while the app is open and connected, so gaps in the chart are times it wasn't.</p>
     </section>
   </main>
 
@@ -483,7 +483,7 @@ const PACE_SETTINGS = [
 const S = {
   demo: true, device: null, proto: null, rx: null, tx: null, userClosed: false, reconnectTry: 0,
   live: null, settings: null, info: {}, lastLive: 0, frames: 0, crcFails: 0,
-  hist: [], demoHist: [], logLines: [], rawSeen: 0, devName: '', active: false, pollTimer: null, wakeLock: null,
+  hist: [], histMin: [], bucket: null, demoHist: [], logLines: [], rawSeen: 0, devName: '', active: false, pollTimer: null, wakeLock: null,
   series: 'w', win: 3600000,
 };
 const store = {
@@ -778,17 +778,71 @@ function setLive(d) {
 }
 
 /* ================= history ================= */
+// Two tiers in IndexedDB: every 5 s reading for 24 hours, and one-minute averages for 30 days.
+const FINE_KEEP = 86400000, MIN_KEEP = 30 * 86400000;
+const DB = {
+  db: null,
+  open() {
+    return new Promise(ok => {
+      try {
+        const r = indexedDB.open('cellwatch', 1);
+        r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('fine'); d.createObjectStore('min'); };
+        r.onsuccess = () => { this.db = r.result; ok(true); };
+        r.onerror = () => ok(false);
+      } catch (e) { ok(false); }
+    });
+  },
+  tx(store, mode) { return this.db.transaction(store, mode).objectStore(store); },
+  put(store, p) { if (this.db) try { this.tx(store, 'readwrite').put(p, p[0]); } catch (e) {} },
+  all(store) {
+    return new Promise(ok => {
+      if (!this.db) return ok([]);
+      try { const r = this.tx(store).getAll(); r.onsuccess = () => ok(r.result || []); r.onerror = () => ok([]); } catch (e) { ok([]); }
+    });
+  },
+  prune(store, before) { if (this.db) try { this.tx(store, 'readwrite').delete(IDBKeyRange.upperBound(before, true)); } catch (e) {} },
+  clear() { if (this.db) for (const s of ['fine', 'min']) try { this.tx(s, 'readwrite').clear(); } catch (e) {} },
+};
+
+async function loadHistory() {
+  const ok = await DB.open();
+  if (!ok) log('History database unavailable; history will only last while the app is open.');
+  const old = store.get('hist', null);
+  if (Array.isArray(old) && old.length) { old.forEach(p => DB.put('fine', p)); store.set('hist', null); }
+  const now = Date.now();
+  DB.prune('fine', now - FINE_KEEP); DB.prune('min', now - MIN_KEEP);
+  S.hist = (await DB.all('fine')).filter(p => p[0] >= now - FINE_KEEP);
+  S.histMin = (await DB.all('min')).filter(p => p[0] >= now - MIN_KEEP);
+  if (Array.isArray(old)) for (const p of old) addToMinute(p);
+  log(`History loaded: ${S.hist.length} readings, ${S.histMin.length} minutes`);
+}
+
+// Running average for the current minute; written to the database on every sample so nothing is lost on close.
+function addToMinute(p, save = true) {
+  const m = Math.floor(p[0] / 60000) * 60000;
+  let b = S.bucket;
+  if (!b || b.t !== m) b = S.bucket = { t: m, v: 0, a: 0, soc: 0, n: 0 };
+  b.v += p[1]; b.a += p[2]; b.soc += p[3]; b.n++;
+  const avg = [m, +(b.v / b.n).toFixed(2), +(b.a / b.n).toFixed(2), Math.round(b.soc / b.n)];
+  const last = S.histMin[S.histMin.length - 1];
+  if (last && last[0] === m) S.histMin[S.histMin.length - 1] = avg; else S.histMin.push(avg);
+  if (save) DB.put('min', avg);
+}
+
 function recordHistory(d) {
   const now = Date.now(), last = S.hist[S.hist.length - 1];
   if (last && now - last[0] < 5000) return;
-  S.hist.push([now, +d.v.toFixed(2), +d.a.toFixed(2), d.soc]);
-  const cut = now - 86400000;
-  while (S.hist.length && S.hist[0][0] < cut) S.hist.shift();
-  if (S.hist.length % 6 === 0) store.set('hist', S.hist);
-  drawChart();
+  const p = [now, +d.v.toFixed(2), +d.a.toFixed(2), d.soc];
+  S.hist.push(p); DB.put('fine', p);
+  addToMinute(p);
+  while (S.hist.length && S.hist[0][0] < now - FINE_KEEP) S.hist.shift();
+  while (S.histMin.length && S.histMin[0][0] < now - MIN_KEEP) S.histMin.shift();
+  if (!$('#view-history').hidden) drawChart();
 }
+const histSource = () => S.demo ? S.demoHist : S.win > FINE_KEEP ? S.histMin : S.hist;
 function exportCsv() {
-  const rows = (S.demo ? S.demoHist : S.hist).map(([t, v, a, soc]) => [new Date(t).toISOString(), v, a, (v * a).toFixed(1), soc].join(','));
+  const t0 = Date.now() - S.win;
+  const rows = histSource().filter(p => p[0] >= t0).map(([t, v, a, soc]) => [new Date(t).toISOString(), v, a, (v * a).toFixed(1), soc].join(','));
   const blob = new Blob(['time,volts,amps,watts,soc\n' + rows.join('\n')], { type: 'text/csv' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'battery-' + new Date().toISOString().slice(0, 10) + '.csv';
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
@@ -802,7 +856,8 @@ function drawChart() {
   const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
   const css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
   const now = Date.now(), t0 = now - S.win;
-  const src = (S.demo ? S.demoHist : S.hist).filter(p => p[0] >= t0);
+  const src = histSource().filter(p => p[0] >= t0);
+  const long = S.win > FINE_KEEP, gap = long ? 5 * 60000 : 60000;
   const key = S.series;
   const val = p => key === 'w' ? p[1] * p[2] : key === 'soc' ? p[3] : p[1];
   g.font = '11px ' + css.getPropertyValue('--mono'); g.textBaseline = 'middle';
@@ -825,11 +880,11 @@ function drawChart() {
     g.fillText(v.toFixed(dec) + (key === 'soc' ? '%' : key === 'w' ? '' : ''), padL - 6, y);
   }
   g.textAlign = 'center';
-  [0, .5, 1].forEach(f => { const t = t0 + f * S.win; g.textAlign = f === 0 ? 'left' : f === 1 ? 'right' : 'center'; g.fillText(f === 1 ? 'now' : new Date(t).toTimeString().slice(0, 5), padL + f * pw, H - 8); });
+  [0, .5, 1].forEach(f => { const t = t0 + f * S.win; g.textAlign = f === 0 ? 'left' : f === 1 ? 'right' : 'center'; g.fillText(f === 1 ? 'now' : long ? new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' }) : new Date(t).toTimeString().slice(0, 5), padL + f * pw, H - 8); });
   g.textAlign = 'left'; g.fillText(key === 'w' ? 'W' : key === 'v' ? 'V' : '', 4, padT);
   const base = key === 'w' ? Y(0) : padT + ph;
   const segs = []; let cur = [];
-  src.forEach((p, i) => { if (i && p[0] - src[i - 1][0] > 60000) { segs.push(cur); cur = []; } cur.push(p); }); segs.push(cur);
+  src.forEach((p, i) => { if (i && p[0] - src[i - 1][0] > gap) { segs.push(cur); cur = []; } cur.push(p); }); segs.push(cur);
   const fillPath = s => { g.beginPath(); g.moveTo(X(s[0][0]), base); s.forEach(p => g.lineTo(X(p[0]), Y(val(p)))); g.lineTo(X(s[s.length - 1][0]), base); g.closePath(); };
   for (const s of segs) {
     if (s.length < 2) continue;
@@ -1010,7 +1065,6 @@ function stopDemo() {
   ['#soc', '#fV', '#fA', '#fW', '#fTemp'].forEach(s => $(s).textContent = '--');
   $('#stateLine').textContent = 'Waiting for the first reading…'; $('#capLine').textContent = '';
   $('#cells').textContent = ''; $('#temps').textContent = ''; $('#chips').textContent = ''; $('#socFill').style.width = '0';
-  $('#histNote').textContent = 'History keeps the last 24 hours on this device while the page is open and connected.';
   drawChart();
 }
 
@@ -1036,7 +1090,6 @@ function showView(name) {
 }
 
 async function init() {
-  S.hist = store.get('hist', []).filter(p => Array.isArray(p) && p[0] > Date.now() - 86400000);
   $('#ratedAh').value = store.get('ratedAh', '') || '';
   $('#flipSign').checked = !!store.get('flip', false);
   $('#wake').checked = !!store.get('wake', false);
@@ -1060,7 +1113,12 @@ async function init() {
   $('#segSeries').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.series = b.dataset.k; store.set('series', S.series); document.querySelectorAll('#segSeries button').forEach(x => x.setAttribute('aria-pressed', x === b)); drawChart(); };
   $('#segWin').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.win = +b.dataset.w; store.set('win', S.win); document.querySelectorAll('#segWin button').forEach(x => x.setAttribute('aria-pressed', x === b)); drawChart(); };
   $('#btnCsv').onclick = exportCsv;
-  $('#btnClearHist').onclick = () => { S.hist = []; store.set('hist', []); drawChart(); };
+  $('#btnClearHist').onclick = e => {
+    const b = e.currentTarget;
+    if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to erase all history'; setTimeout(() => { delete b.dataset.armed; b.textContent = 'Clear'; }, 4000); return; }
+    delete b.dataset.armed; b.textContent = 'Clear';
+    S.hist = []; S.histMin = []; S.bucket = null; DB.clear(); drawChart();
+  };
   $('#btnCopyLog').onclick = async e => {
     const text = S.logLines.join('\n') + (S.live ? '\n\nlast live registers: ' + JSON.stringify(S.live.raw || []) : '');
     try { await navigator.clipboard.writeText(text); e.target.textContent = 'Copied'; } catch (er) { const r = document.createRange(); r.selectNodeContents($('#log')); getSelection().removeAllRanges(); getSelection().addRange(r); e.target.textContent = 'Selected'; }
@@ -1071,6 +1129,7 @@ async function init() {
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', drawChart);
   if (!('wakeLock' in navigator)) $('#wakeRow').hidden = true;
 
+  await loadHistory();
   if (NATIVE) {
     $('#btnCsv').hidden = true;
     $('#bannerText').textContent = 'Showing demo data. Close SMB Link, then tap Connect battery.';
