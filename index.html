@@ -228,6 +228,7 @@ td.reg{font-family:var(--mono);color:var(--muted);white-space:nowrap}
     </div>
     <div class="actions">
       <span class="pill" id="pill" data-s="demo"><i></i><span id="pillText">Demo</span></span>
+      <button class="primary" id="btnNow" hidden>Connect now</button>
       <button class="primary" id="btnConnect">Connect battery</button>
       <button id="btnDisconnect" hidden>Disconnect</button>
     </div>
@@ -621,7 +622,9 @@ const WebBle = {
   },
   async notify(svc, ch, cb) {
     const c = this.chars.get(svc + '|' + ch);
-    c.addEventListener('characteristicvaluechanged', e => cb(u8(e.target.value)));
+    if (c.__ferroCb) c.removeEventListener('characteristicvaluechanged', c.__ferroCb);
+    c.__ferroCb = e => cb(u8(e.target.value));
+    c.addEventListener('characteristicvaluechanged', c.__ferroCb);
     await c.startNotifications();
   },
   async write(svc, ch, bytes, withResp) {
@@ -715,6 +718,9 @@ function beginSession(id, name) {
 }
 
 async function connect() {
+  if (S.connecting) return;
+  cancelReconnect();
+  S.connecting = true;
   setPill('busy', S.reconnectTry ? 'Reconnecting…' : 'Connecting…');
   setBanner(null);
   try {
@@ -771,6 +777,8 @@ async function connect() {
     setPill('err', 'Not connected');
     showError((e.message || 'Could not connect.') + ' Make sure SMB Link is fully closed, then try again.');
     resetButtons();
+  } finally {
+    S.connecting = false;
   }
 }
 
@@ -783,13 +791,31 @@ function onDrop() {
   scheduleReconnect();
 }
 function scheduleReconnect() {
+  cancelReconnect();
   S.reconnectTry++;
   if (S.reconnectTry > 12) { setPill('err', 'Lost connection'); showError('The battery stopped responding. Move closer and press Connect battery.'); resetButtons(); return; }
   const wait = Math.min(30000, 1000 * 2 ** Math.min(S.reconnectTry - 1, 5));
-  setPill('busy', `Reconnecting in ${Math.round(wait / 1000)} s…`);
-  setTimeout(() => { if (!S.userClosed && !S.active) connect(); }, wait);
+  S.reconnectAt = Date.now() + wait;
+  const tick = () => setPill('busy', `Reconnecting in ${Math.max(1, Math.ceil((S.reconnectAt - Date.now()) / 1000))} s…`);
+  tick();
+  S.countdown = setInterval(tick, 1000);
+  S.reconnectTimer = setTimeout(() => { if (!S.userClosed && !S.active) connect(); }, wait);
+  $('#btnNow').hidden = false;
 }
-async function disconnect() { S.userClosed = true; stopPolling(); await BLE.disconnect(); onDrop(); setPill('idle', 'Disconnected'); resetButtons(); }
+// Stops a pending automatic retry (and its countdown) without changing anything else.
+function cancelReconnect() {
+  clearTimeout(S.reconnectTimer); clearInterval(S.countdown);
+  S.reconnectTimer = S.countdown = null; S.reconnectAt = 0;
+  $('#btnNow').hidden = true;
+}
+// Skip the countdown and try immediately; if it fails, retries start over from a short wait.
+function connectNow() {
+  if (S.active || S.connecting || !S.reconnectAt) return;
+  log('Connect now pressed');
+  S.reconnectTry = 1;
+  connect();
+}
+async function disconnect() { cancelReconnect(); S.userClosed = true; stopPolling(); await BLE.disconnect(); onDrop(); setPill('idle', 'Disconnected'); resetButtons(); }
 function resetButtons() { $('#btnConnect').hidden = false; $('#btnDisconnect').hidden = true; $('#btnRereadSettings').disabled = true; }
 
 let wq = Promise.resolve();
@@ -1686,6 +1712,9 @@ async function init() {
   showView(store.get('view', 'battery'));
   $('#btnConnect').onclick = () => NATIVE ? openScanner() : pickWeb();
   $('#btnDisconnect').onclick = disconnect;
+  $('#btnNow').onclick = connectNow;
+  // Android slows timers while the app is in the background, so retry right away when it comes back.
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.reconnectAt) connectNow(); });
   $('#btnScanClose').onclick = closeScanner;
   $('#btnRescan').onclick = () => { NativeBle.stopScan().then(openScanner); };
   $('#showUnnamed').onchange = renderScan;

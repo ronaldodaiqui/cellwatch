@@ -63,3 +63,11 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Ferro 1.${{ github.run_number }}" \
             --notes "Open this page on your Android phone, tap Ferro.apk to download, then open the file to install. Built from ${GITHUB_SHA::7}."
+          # A permanent per-build release, so any build can be downloaded again by its number.
+          V="1.${{ github.run_number }}"
+          cp Ferro.apk "Ferro-$V.apk"
+          gh release create "v$V" "Ferro-$V.apk" \
+            --target "$GITHUB_SHA" \
+            --title "Ferro $V" \
+            --latest=false \
+            --notes "Ferro build $V, built from ${GITHUB_SHA::7}." || true
